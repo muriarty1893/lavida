@@ -3,40 +3,33 @@ import sqlite3
 import requests
 import threading
 import webbrowser
-import time  # Zaman kilidi için gerekli
+import time
 from bs4 import BeautifulSoup
 
 # --- Global Mouse Dinleyicisi ---
 from pynput import mouse
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QListWidget, 
-                             QVBoxLayout, QWidget, QLabel, QListWidgetItem)
+                             QVBoxLayout, QWidget, QLabel, QListWidgetItem, QPushButton)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QColor
 
-# --- 1. Global Mouse Dinleyicisi (Button 7 Dedektifi) ---
+# --- 1. Global Mouse Dinleyicisi ---
 class GlobalInputListener(QThread):
     toggle_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
-        self.last_action_time = 0  # Son işlem zamanı
+        self.last_action_time = 0 
 
     def run(self):
-        # Sadece scroll olayını dinliyoruz
-        # Button 6 ve 7 pynput'ta 'on_scroll' olarak gelir
         with mouse.Listener(on_scroll=self.on_scroll) as listener:
             listener.join()
 
     def on_scroll(self, x, y, dx, dy):
-        # dx > 0  => Button 7 (Sağa İtme)
-        # dx < 0  => Button 6 (Sola İtme)
-        # dy ...  => Button 4/5 (Yukarı/Aşağı)
-
         # Sadece Button 7 (Sağa İtme) ise işlem yap
         if dx > 0:
             current_time = time.time()
-            # Eğer son işlemden bu yana 0.4 saniye geçmediyse YOK SAY (Debounce)
             if current_time - self.last_action_time > 0.4:
                 self.toggle_signal.emit()
                 self.last_action_time = current_time
@@ -56,17 +49,14 @@ class VideoListWidget(QListWidget):
         db_id = item.data(Qt.ItemDataRole.UserRole + 1)
 
         if event.button() == Qt.MouseButton.LeftButton:
-            # Sol Tık: Aç + İzlendi
             if url:
                 webbrowser.open(url)
                 self.parent_window.mark_as_watched(db_id, item)
             
         elif event.button() == Qt.MouseButton.RightButton:
-            # Sağ Tık: İzlenmedi Yap
             self.parent_window.mark_as_unwatched(db_id, item)
             
         elif event.button() == Qt.MouseButton.MiddleButton:
-            # Orta Tık: Sil
             self.parent_window.delete_video(db_id, item)
 
         super().mousePressEvent(event)
@@ -108,11 +98,11 @@ class LavidaApp(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(5, 5, 5, 5)
+        self.layout.setContentsMargins(10, 10, 10, 10) # Kenar boşlukları
 
         self.setStyleSheet("""
             QWidget {
-                background-color: rgba(10, 10, 10, 200);
+                background-color: rgba(10, 10, 10, 220);
                 border-radius: 12px;
                 color: #ffffff;
                 font-family: 'Segoe UI', sans-serif;
@@ -137,15 +127,41 @@ class LavidaApp(QMainWindow):
                 background: rgba(255,255,255,30); 
                 border-radius: 5px;
             }
+            /* --- YENİ BUTON STİLİ --- */
+            QPushButton {
+                background-color: rgba(200, 50, 50, 30); /* Soluk Kırmızı */
+                color: rgba(255, 255, 255, 150);
+                border: 1px solid rgba(200, 50, 50, 50);
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 0, 0, 180); /* Parlak Kırmızı */
+                color: white;
+                border: 1px solid red;
+            }
         """)
 
+        # 1. Başlık
         lbl = QLabel("Lavida List")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(lbl)
 
+        # 2. Liste
         self.list_widget = VideoListWidget(self)
         self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.layout.addWidget(self.list_widget)
+
+        # 3. Çıkış Butonu (YENİ)
+        self.close_btn = QPushButton("Uygulamayı Kapat")
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.clicked.connect(self.close_application)
+        self.layout.addWidget(self.close_btn)
+
+    def close_application(self):
+        # Uygulamayı tamamen sonlandır
+        QApplication.quit()
 
     def init_db(self):
         self.conn = sqlite3.connect("lavida.db", check_same_thread=False)
@@ -241,7 +257,6 @@ class LavidaApp(QMainWindow):
         except:
             self.add_video_signal.emit(url, url)
 
-    # --- Görünürlük ---
     def toggle_visibility(self):
         if self.isHidden():
             self.show()
@@ -253,8 +268,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = LavidaApp()
     
-    # window.show()  <-- BUNU SİL VEYA YORUM SATIRI YAP
-    # Artık uygulama hayalet gibi başlayacak.
-    # Sen mouse'u sağa ittirdiğinde "toggle_visibility" çalışıp onu gösterecek.
+    # window.show() # Otomatik başlatmada bunu kapalı tutuyoruz
     
     sys.exit(app.exec())
