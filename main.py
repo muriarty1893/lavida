@@ -5,16 +5,10 @@ import threading
 import webbrowser
 import time
 from bs4 import BeautifulSoup
-
-# --- Global Mouse Dinleyicisi ---
 from pynput import mouse
-
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QListWidget, 
-                             QVBoxLayout, QWidget, QLabel, QListWidgetItem, QPushButton)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QListWidget, QVBoxLayout, QWidget, QLabel, QListWidgetItem, QPushButton)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QColor
-
-# --- 1. Global Mouse Dinleyicisi ---
 class GlobalInputListener(QThread):
     toggle_signal = pyqtSignal()
 
@@ -27,14 +21,12 @@ class GlobalInputListener(QThread):
             listener.join()
 
     def on_scroll(self, x, y, dx, dy):
-        # Sadece Button 7 (Sağa İtme) ise işlem yap
         if dx > 0:
             current_time = time.time()
             if current_time - self.last_action_time > 0.4:
                 self.toggle_signal.emit()
                 self.last_action_time = current_time
 
-# --- 2. Özel Liste Kutusu ---
 class VideoListWidget(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -61,14 +53,12 @@ class VideoListWidget(QListWidget):
 
         super().mousePressEvent(event)
 
-# --- 3. Ana Uygulama ---
 class LavidaApp(QMainWindow):
     add_video_signal = pyqtSignal(str, str)
 
     def __init__(self):
         super().__init__()
         
-        # --- Pencere Ayarları ---
         self.setWindowTitle("Lavida")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | 
                             Qt.WindowType.WindowStaysOnTopHint | 
@@ -84,7 +74,6 @@ class LavidaApp(QMainWindow):
 
         self.add_video_signal.connect(self.add_item_to_ui)
 
-        # --- Dinleyiciyi Başlat ---
         self.listener = GlobalInputListener()
         self.listener.toggle_signal.connect(self.toggle_visibility)
         self.listener.start()
@@ -127,7 +116,6 @@ class LavidaApp(QMainWindow):
                 background: rgba(255,255,255,30); 
                 border-radius: 5px;
             }
-            /* --- YENİ BUTON STİLİ --- */
             QPushButton {
                 background-color: rgba(200, 50, 50, 30); /* Soluk Kırmızı */
                 color: rgba(255, 255, 255, 150);
@@ -143,24 +131,20 @@ class LavidaApp(QMainWindow):
             }
         """)
 
-        # 1. Başlık
         lbl = QLabel("Lavida List")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(lbl)
 
-        # 2. Liste
         self.list_widget = VideoListWidget(self)
         self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.layout.addWidget(self.list_widget)
 
-        # 3. Çıkış Butonu (YENİ)
         self.close_btn = QPushButton("Uygulamayı Kapat")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.close_application)
         self.layout.addWidget(self.close_btn)
 
     def close_application(self):
-        # Uygulamayı tamamen sonlandır
         QApplication.quit()
 
     def init_db(self):
@@ -268,6 +252,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = LavidaApp()
     
-    # window.show() # Otomatik başlatmada bunu kapalı tutuyoruz
+    # window.show() 
     
     sys.exit(app.exec())
