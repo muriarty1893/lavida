@@ -6,9 +6,11 @@ import webbrowser
 import time
 from bs4 import BeautifulSoup
 from pynput import mouse
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QListWidget, QVBoxLayout, QWidget, QLabel, QListWidgetItem, QPushButton)
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QListWidget, QVBoxLayout, 
+                             QWidget, QLabel, QListWidgetItem, QPushButton, QTabWidget)
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QColor
+
 class GlobalInputListener(QThread):
     toggle_signal = pyqtSignal()
 
@@ -28,9 +30,9 @@ class GlobalInputListener(QThread):
                 self.last_action_time = current_time
 
 class VideoListWidget(QListWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent_window = parent
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
 
     def mousePressEvent(self, event):
         item = self.itemAt(event.pos())
@@ -43,18 +45,18 @@ class VideoListWidget(QListWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             if url:
                 webbrowser.open(url)
-                self.parent_window.mark_as_watched(db_id, item)
+                self.main_window.mark_as_watched(db_id, item)
             
         elif event.button() == Qt.MouseButton.RightButton:
-            self.parent_window.mark_as_unwatched(db_id, item)
+            self.main_window.mark_as_unwatched(db_id, item)
             
         elif event.button() == Qt.MouseButton.MiddleButton:
-            self.parent_window.delete_video(db_id, item)
+            self.main_window.delete_video(db_id, item)
 
         super().mousePressEvent(event)
 
 class LavidaApp(QMainWindow):
-    add_video_signal = pyqtSignal(str, str)
+    add_video_signal = pyqtSignal(str, str, int)
 
     def __init__(self):
         super().__init__()
@@ -64,7 +66,7 @@ class LavidaApp(QMainWindow):
                             Qt.WindowType.WindowStaysOnTopHint | 
                             Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(300, 500)
+        self.setFixedSize(320, 550)
         self.setAcceptDrops(True)
 
         self.position_left_center()
@@ -87,7 +89,7 @@ class LavidaApp(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(10, 10, 10, 10) # Kenar boşlukları
+        self.layout.setContentsMargins(10, 10, 10, 10)
 
         self.setStyleSheet("""
             QWidget {
@@ -103,6 +105,25 @@ class LavidaApp(QMainWindow):
                 color: #ff4444; 
                 margin-bottom: 5px;
             }
+            QTabWidget::pane {
+                border: 0;
+                background: transparent;
+            }
+            QTabBar::tab {
+                background: rgba(255, 255, 255, 20);
+                color: white;
+                padding: 8px 15px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background: rgba(255, 50, 50, 100);
+                font-weight: bold;
+            }
+            QTabBar::tab:hover {
+                background: rgba(255, 255, 255, 40);
+            }
             QListWidget { 
                 background: transparent; 
                 border: none; 
@@ -117,15 +138,15 @@ class LavidaApp(QMainWindow):
                 border-radius: 5px;
             }
             QPushButton {
-                background-color: rgba(200, 50, 50, 30); /* Soluk Kırmızı */
+                background-color: rgba(200, 50, 50, 30);
                 color: rgba(255, 255, 255, 150);
                 border: 1px solid rgba(200, 50, 50, 50);
                 border-radius: 8px;
-                padding: 8px;
-                font-size: 12px;
+                padding: 5px;
+                font-size: 11px;
             }
             QPushButton:hover {
-                background-color: rgba(255, 0, 0, 180); /* Parlak Kırmızı */
+                background-color: rgba(255, 0, 0, 180);
                 color: white;
                 border: 1px solid red;
             }
@@ -135,11 +156,21 @@ class LavidaApp(QMainWindow):
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(lbl)
 
-        self.list_widget = VideoListWidget(self)
-        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.layout.addWidget(self.list_widget)
+        self.tabs = QTabWidget()
+        
+        self.list_1 = VideoListWidget(self)
+        self.list_2 = VideoListWidget(self)
+        self.list_3 = VideoListWidget(self)
 
-        self.close_btn = QPushButton("Uygulamayı Kapat")
+        self.tab_lists = [self.list_1, self.list_2, self.list_3]
+
+        self.tabs.addTab(self.list_1, "1")
+        self.tabs.addTab(self.list_2, "2")
+        self.tabs.addTab(self.list_3, "3")
+
+        self.layout.addWidget(self.tabs)
+
+        self.close_btn = QPushButton("disable")
         self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.close_btn.clicked.connect(self.close_application)
         self.layout.addWidget(self.close_btn)
@@ -150,23 +181,34 @@ class LavidaApp(QMainWindow):
     def init_db(self):
         self.conn = sqlite3.connect("lavida.db", check_same_thread=False)
         self.cursor = self.conn.cursor()
+        
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS videos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url TEXT,
                 title TEXT,
-                watched INTEGER DEFAULT 0
+                watched INTEGER DEFAULT 0,
+                tab_index INTEGER DEFAULT 0
             )
         """)
+        
+        try:
+            self.cursor.execute("ALTER TABLE videos ADD COLUMN tab_index INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass 
+
         self.conn.commit()
 
     def load_data(self):
-        self.list_widget.clear()
-        self.cursor.execute("SELECT id, title, url, watched FROM videos ORDER BY id DESC")
-        for vid_id, title, url, watched in self.cursor.fetchall():
-            self.add_item_ui_raw(vid_id, title, url, watched)
+        for lst in self.tab_lists:
+            lst.clear()
 
-    def add_item_ui_raw(self, vid_id, title, url, watched):
+        self.cursor.execute("SELECT id, title, url, watched, tab_index FROM videos ORDER BY id DESC")
+        for vid_id, title, url, watched, tab_index in self.cursor.fetchall():
+            target_index = tab_index if tab_index < len(self.tab_lists) else 0
+            self.add_item_ui_raw(vid_id, title, url, watched, target_index)
+
+    def add_item_ui_raw(self, vid_id, title, url, watched, tab_index):
         item = QListWidgetItem(title)
         item.setData(Qt.ItemDataRole.UserRole, url)
         item.setData(Qt.ItemDataRole.UserRole + 1, vid_id)
@@ -182,13 +224,13 @@ class LavidaApp(QMainWindow):
             font.setStrikeOut(False)
             item.setFont(font)
             
-        self.list_widget.addItem(item)
+        self.tab_lists[tab_index].addItem(item)
 
-    def add_item_to_ui(self, title, url):
-        self.cursor.execute("INSERT INTO videos (url, title) VALUES (?, ?)", (url, title))
+    def add_item_to_ui(self, title, url, tab_index):
+        self.cursor.execute("INSERT INTO videos (url, title, tab_index) VALUES (?, ?, ?)", (url, title, tab_index))
         self.conn.commit()
         last_id = self.cursor.lastrowid
-        self.add_item_ui_raw(last_id, title, url, 0)
+        self.add_item_ui_raw(last_id, title, url, 0, tab_index)
 
     def mark_as_watched(self, vid_id, item):
         self.cursor.execute("UPDATE videos SET watched = 1 WHERE id = ?", (vid_id,))
@@ -209,8 +251,10 @@ class LavidaApp(QMainWindow):
     def delete_video(self, vid_id, item):
         self.cursor.execute("DELETE FROM videos WHERE id = ?", (vid_id,))
         self.conn.commit()
-        row = self.list_widget.row(item)
-        self.list_widget.takeItem(row)
+        
+        list_widget = item.listWidget()
+        row = list_widget.row(item)
+        list_widget.takeItem(row)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls() or event.mimeData().hasText():
@@ -226,9 +270,10 @@ class LavidaApp(QMainWindow):
             url = event.mimeData().text()
             
         if "youtube.com" in url or "youtu.be" in url:
-            threading.Thread(target=self.fetch_title, args=(url,), daemon=True).start()
+            current_tab_index = self.tabs.currentIndex()
+            threading.Thread(target=self.fetch_title, args=(url, current_tab_index), daemon=True).start()
 
-    def fetch_title(self, url):
+    def fetch_title(self, url, tab_index):
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(url, headers=headers, timeout=5)
@@ -237,9 +282,9 @@ class LavidaApp(QMainWindow):
                 title = soup.title.string.replace("- YouTube", "").strip()
             else:
                 title = url
-            self.add_video_signal.emit(title, url)
+            self.add_video_signal.emit(title, url, tab_index)
         except:
-            self.add_video_signal.emit(url, url)
+            self.add_video_signal.emit(url, url, tab_index)
 
     def toggle_visibility(self):
         if self.isHidden():
@@ -252,6 +297,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = LavidaApp()
     
-    # window.show() 
-    
+    # window.show()
+
     sys.exit(app.exec())
