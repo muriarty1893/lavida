@@ -4,7 +4,6 @@ from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout, QFrame,
 from PyQt6.QtCore import Qt, QSize, QRectF
 from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush
 
-# --- 1. ÖZEL TUTMA YERİ (6 NOKTA) ---
 class DragHandle(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,7 +33,6 @@ class DragHandle(QWidget):
                 y = start_y + row * (dot_size + gap)
                 painter.drawEllipse(QRectF(x, y, dot_size, dot_size))
 
-# --- 2. KART TASARIMI ---
 class VideoCard(QFrame):
     def __init__(self, vid_id, title, url, watched, parent_window, list_item):
         super().__init__()
@@ -103,9 +101,10 @@ class VideoCard(QFrame):
                     self.parent_window.mark_as_watched(self.vid_id, self)
         elif event.button() == Qt.MouseButton.RightButton:
             self.parent_window.mark_as_unwatched(self.vid_id, self)
+        elif event.button() == Qt.MouseButton.MiddleButton:
+            self.delete_clicked()
         super().mousePressEvent(event)
 
-# --- 3. SÜRÜKLENEBİLİR LİSTE ---
 class DraggableListWidget(QListWidget):
     def __init__(self, parent_window, tab_index):
         super().__init__()
