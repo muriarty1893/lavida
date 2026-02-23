@@ -1,0 +1,4 @@
+PyQt6==6.10.2
+beautifulsoup4==4.14.3
+requests==2.32.5
+pynput==1.8.1
