@@ -4,12 +4,11 @@ import threading
 from bs4 import BeautifulSoup
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QTabWidget, 
-                             QVBoxLayout, QHBoxLayout, QFrame, QListWidgetItem, 
-                             QGraphicsDropShadowEffect, QApplication)
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint
-from PyQt6.QtGui import QColor
+                             QVBoxLayout, QHBoxLayout, QFrame, QGraphicsDropShadowEffect, 
+                             QApplication, QListWidgetItem) 
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize
+from PyQt6.QtGui import QColor, QCursor
 
-# Kendi modüllerimizi çağırıyoruz
 from src.workers import GlobalInputListener
 from src.ui.widgets import VideoCard, DraggableListWidget
 
@@ -24,11 +23,16 @@ class LavidaApp(QMainWindow):
                             Qt.WindowType.WindowStaysOnTopHint | 
                             Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setFixedSize(340, 600)
+        
+        self.setMinimumSize(300, 400) 
+        self.resize(340, 600)         
+        
         self.setAcceptDrops(True)
+        self.setMouseTracking(True) 
 
         self.init_db()
-        if not self.load_window_position():
+        
+        if not self.load_settings():
             self.position_left_center()
 
         self.setup_ui()
@@ -40,47 +44,122 @@ class LavidaApp(QMainWindow):
         self.listener.toggle_signal.connect(self.toggle_visibility)
         self.listener.start()
         
-        self.old_pos = None
+        self.resize_margin = 10       
+        self.current_edge = None      
+        self.is_resizing = False      
+        self.old_pos = None           
 
     def position_left_center(self):
         screen = QApplication.primaryScreen().geometry()
         new_y = (screen.height() - self.height()) // 2
         self.move(20, new_y)
 
-    # --- Mouse Olayları (Pencere Taşıma) ---
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.old_pos = event.globalPosition().toPoint()
+            self.current_edge = self.check_edge(event.pos())
+            
+            if self.current_edge:
+                self.is_resizing = True
+                self.start_geometry = self.geometry()      
+                self.start_mouse_pos = event.globalPosition() 
+            else:
+                self.is_resizing = False
+                self.old_pos = event.globalPosition().toPoint()
 
     def mouseMoveEvent(self, event):
-        if self.old_pos:
+        if not self.is_resizing and not self.old_pos:
+            edge = self.check_edge(event.pos())
+            self.set_cursor_shape(edge)
+            return
+
+        if self.is_resizing:
+            delta = event.globalPosition() - self.start_mouse_pos
+            geom = self.start_geometry
+            
+            x, y, w, h = geom.x(), geom.y(), geom.width(), geom.height()
+            dx, dy = delta.x(), delta.y()
+
+            if "LEFT" in self.current_edge:
+                x += dx
+                w -= dx
+            if "RIGHT" in self.current_edge:
+                w += dx
+            if "TOP" in self.current_edge:
+                y += dy
+                h -= dy
+            if "BOTTOM" in self.current_edge:
+                h += dy
+            
+            if w > self.minimumWidth() and h > self.minimumHeight():
+                self.setGeometry(int(x), int(y), int(w), int(h))
+
+        elif self.old_pos:
             delta = QPoint(event.globalPosition().toPoint() - self.old_pos)
             self.move(self.x() + delta.x(), self.y() + delta.y())
             self.old_pos = event.globalPosition().toPoint()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            self.is_resizing = False
             self.old_pos = None
-            self.save_window_position()
+            self.current_edge = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.save_settings() 
 
-    # --- Ayarlar ve Veritabanı ---
-    def save_window_position(self):
-        x = self.x()
-        y = self.y()
-        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('pos_x', ?)", (str(x),))
-        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('pos_y', ?)", (str(y),))
+    def check_edge(self, pos):
+        x, y = pos.x(), pos.y()
+        w, h = self.width(), self.height()
+        m = self.resize_margin
+        
+        edge = ""
+        if y < m: edge += "TOP"
+        elif y > h - m: edge += "BOTTOM"
+        
+        if x < m: edge += "LEFT"
+        elif x > w - m: edge += "RIGHT"
+        
+        return edge if edge else None
+
+    def set_cursor_shape(self, edge):
+        if not edge:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            return
+
+        if edge in ["TOPLEFT", "BOTTOMRIGHT"]:
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        elif edge in ["TOPRIGHT", "BOTTOMLEFT"]:
+            self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+        elif edge in ["LEFT", "RIGHT"]:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif edge in ["TOP", "BOTTOM"]:
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+
+    def save_settings(self):
+        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('pos_x', ?)", (str(self.x()),))
+        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('pos_y', ?)", (str(self.y()),))
+        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('width', ?)", (str(self.width()),))
+        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('height', ?)", (str(self.height()),))
         self.conn.commit()
 
-    def load_window_position(self):
+    def load_settings(self):
         try:
             self.cursor.execute("SELECT value FROM settings WHERE key='pos_x'")
             row_x = self.cursor.fetchone()
             self.cursor.execute("SELECT value FROM settings WHERE key='pos_y'")
             row_y = self.cursor.fetchone()
+            
+            self.cursor.execute("SELECT value FROM settings WHERE key='width'")
+            row_w = self.cursor.fetchone()
+            self.cursor.execute("SELECT value FROM settings WHERE key='height'")
+            row_h = self.cursor.fetchone()
+
             if row_x and row_y:
                 self.move(int(row_x[0]), int(row_y[0]))
-                return True
-            return False
+            
+            if row_w and row_h:
+                self.resize(int(row_w[0]), int(row_h[0]))
+                
+            return (row_x is not None)
         except:
             return False
 
@@ -95,23 +174,27 @@ class LavidaApp(QMainWindow):
                 title TEXT,
                 watched INTEGER DEFAULT 0,
                 tab_index INTEGER DEFAULT 0,
-                row_order INTEGER DEFAULT 0
+                row_order INTEGER DEFAULT 0,
+                is_deleted INTEGER DEFAULT 0
             )
         """)
         try: self.cursor.execute("ALTER TABLE videos ADD COLUMN tab_index INTEGER DEFAULT 0")
         except: pass
         try: self.cursor.execute("ALTER TABLE videos ADD COLUMN row_order INTEGER DEFAULT 0")
         except: pass
+        try: self.cursor.execute("ALTER TABLE videos ADD COLUMN is_deleted INTEGER DEFAULT 0")
+        except: pass
         
         self.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
         self.conn.commit()
 
-    # --- Arayüz Kurulumu ---
     def setup_ui(self):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
+        
         self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(2, 2, 2, 2)
+        m = 2 
+        self.layout.setContentsMargins(m, m, m, m)
         self.layout.setSpacing(0)
         self.central_widget.setStyleSheet("QWidget { font-family: 'Segoe UI', sans-serif; }")
 
@@ -135,12 +218,15 @@ class LavidaApp(QMainWindow):
         self.frame_layout.setSpacing(5)
         self.layout.addWidget(self.main_frame)
 
-        # Header
         top_bar = QHBoxLayout()
         title_lbl = QLabel("LAVIDA")
         title_lbl.setStyleSheet("color: #00d4ff; font-weight: 900; font-size: 18px; letter-spacing: 2px; border: none; background: transparent;")
         top_bar.addWidget(title_lbl)
         top_bar.addStretch()
+
+        disable_lbl = QLabel("DISABLE")
+        disable_lbl.setStyleSheet("color: rgba(255, 255, 255, 0.3); font-size: 10px; font-weight: bold; margin-right: 4px;")
+        top_bar.addWidget(disable_lbl)
 
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(24, 24)
@@ -150,7 +236,6 @@ class LavidaApp(QMainWindow):
         top_bar.addWidget(close_btn)
         self.frame_layout.addLayout(top_bar)
 
-        # Tabs
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("""
             QTabWidget::pane { border: 0; background: transparent; margin-top: 15px; }
@@ -165,6 +250,14 @@ class LavidaApp(QMainWindow):
             self.tab_lists.append(lst)
             self.tabs.addTab(lst, f"TAB {i}")
 
+        self.history_list = DraggableListWidget(self, 99)
+        self.history_list.setStyleSheet("""
+            QListWidget { background: rgba(0,0,0,0.2); border-radius: 8px; }
+            QListWidget::item { opacity: 0.7; }
+        """)
+        self.tab_lists.append(self.history_list)
+        self.tabs.addTab(self.history_list, "HISTORY")
+
         self.frame_layout.addWidget(self.tabs)
         
         self.empty_lbl = QLabel("Drop YouTube links here")
@@ -173,7 +266,6 @@ class LavidaApp(QMainWindow):
         self.frame_layout.addWidget(self.empty_lbl)
         self.empty_lbl.hide()
 
-    # --- İş Mantığı (Logic) ---
     def check_empty_state(self):
         total_items = sum(lst.count() for lst in self.tab_lists)
         if total_items == 0:
@@ -184,7 +276,7 @@ class LavidaApp(QMainWindow):
             self.tabs.show()
 
     def close_application(self):
-        self.save_window_position()
+        self.save_settings()
         QApplication.quit()
 
     def update_video_order(self, vid_id, new_order):
@@ -193,15 +285,25 @@ class LavidaApp(QMainWindow):
 
     def load_data(self):
         for lst in self.tab_lists: lst.clear()
-        self.cursor.execute("SELECT id, title, url, watched, tab_index FROM videos ORDER BY row_order ASC, id DESC")
+        
+        self.cursor.execute("SELECT id, title, url, watched, tab_index FROM videos WHERE is_deleted=0 ORDER BY row_order ASC, id DESC")
         for vid_id, title, url, watched, tab_index in self.cursor.fetchall():
-            target_index = tab_index if tab_index < len(self.tab_lists) else 0
-            self.create_card_item(vid_id, title, url, watched, target_index)
+            target_index = tab_index if tab_index < 3 else 0
+            self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_index])
+
+        self.cursor.execute("SELECT id, title, url, watched FROM videos WHERE is_deleted=1 ORDER BY id DESC")
+        for vid_id, title, url, watched in self.cursor.fetchall():
+            self.create_card_item(vid_id, title, url, watched, self.history_list)
+
         self.check_empty_state()
 
-    def create_card_item(self, vid_id, title, url, watched, tab_index):
-        target_list = self.tab_lists[tab_index]
-        item = QListWidgetItem(target_list)
+    def create_card_item(self, vid_id, title, url, watched, target_list, insert_top=False):
+        if insert_top:
+            item = QListWidgetItem()
+            target_list.insertItem(0, item)
+        else:
+            item = QListWidgetItem(target_list)
+            
         item.setSizeHint(QSize(0, 40))
         item.setData(Qt.ItemDataRole.UserRole, url)
         item.setData(Qt.ItemDataRole.UserRole + 1, vid_id)
@@ -221,11 +323,25 @@ class LavidaApp(QMainWindow):
         card_widget.set_unwatched_style()
 
     def delete_video(self, vid_id, item):
-        self.cursor.execute("DELETE FROM videos WHERE id = ?", (vid_id,))
-        self.conn.commit()
         list_widget = item.listWidget()
-        row = list_widget.row(item)
-        list_widget.takeItem(row)
+        
+        if list_widget == self.history_list:
+            self.cursor.execute("DELETE FROM videos WHERE id = ?", (vid_id,))
+            self.conn.commit()
+            row = list_widget.row(item)
+            list_widget.takeItem(row)
+        else:
+            self.cursor.execute("UPDATE videos SET is_deleted=1 WHERE id = ?", (vid_id,))
+            self.conn.commit()
+            
+            row = list_widget.row(item)
+            list_widget.takeItem(row)
+            
+            title = item.data(Qt.ItemDataRole.UserRole + 3)
+            url = item.data(Qt.ItemDataRole.UserRole)
+            watched = item.data(Qt.ItemDataRole.UserRole + 2)
+            self.create_card_item(vid_id, title, url, watched, self.history_list)
+
         self.check_empty_state()
 
     def dragEnterEvent(self, event):
@@ -236,15 +352,22 @@ class LavidaApp(QMainWindow):
         url = ""
         if event.mimeData().hasUrls(): url = event.mimeData().urls()[0].toString()
         elif event.mimeData().hasText(): url = event.mimeData().text()
+        
         if "youtube.com" in url or "youtu.be" in url:
-            current_tab_index = self.tabs.currentIndex()
-            self.cursor.execute("SELECT MAX(row_order) FROM videos")
-            max_order = self.cursor.fetchone()[0]
-            new_order = (max_order if max_order else 0) + 1
-            self.cursor.execute("INSERT INTO videos (url, title, tab_index, row_order) VALUES (?, ?, ?, ?)", (url, "Loading info...", current_tab_index, new_order))
+            if self.tabs.currentIndex() == 3: 
+                current_tab_index = 0
+            else:
+                current_tab_index = self.tabs.currentIndex()
+            
+            self.cursor.execute("SELECT MIN(row_order) FROM videos")
+            min_val = self.cursor.fetchone()[0]
+            new_order = (min_val if min_val is not None else 0) - 1
+            
+            self.cursor.execute("INSERT INTO videos (url, title, tab_index, row_order, is_deleted) VALUES (?, ?, ?, ?, 0)", (url, "Loading info...", current_tab_index, new_order))
             self.conn.commit()
             last_id = self.cursor.lastrowid
-            self.create_card_item(last_id, "Loading info...", url, 0, current_tab_index)
+            
+            self.create_card_item(last_id, "Loading info...", url, 0, self.tab_lists[current_tab_index], insert_top=True)
             self.check_empty_state()
             threading.Thread(target=self.fetch_title, args=(url, last_id, current_tab_index), daemon=True).start()
 
@@ -261,12 +384,14 @@ class LavidaApp(QMainWindow):
     def update_item_title(self, title, vid_id, tab_index):
         self.cursor.execute("UPDATE videos SET title = ? WHERE id = ?", (title, vid_id))
         self.conn.commit()
-        target_list = self.tab_lists[tab_index]
+        
+        target_list = self.tab_lists[tab_index] if tab_index < 3 else self.history_list
+        
         for i in range(target_list.count()):
             item = target_list.item(i)
-            item.setData(Qt.ItemDataRole.UserRole + 3, title)
             widget = target_list.itemWidget(item)
             if widget and widget.vid_id == vid_id:
+                item.setData(Qt.ItemDataRole.UserRole + 3, title)
                 widget.title_lbl.setText(title)
                 break
 
