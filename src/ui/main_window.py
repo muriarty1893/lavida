@@ -1,13 +1,13 @@
+import os
 import sqlite3
 import requests
 import threading
 from bs4 import BeautifulSoup
 
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QTabWidget, 
-                             QVBoxLayout, QHBoxLayout, QFrame, QGraphicsDropShadowEffect, 
-                             QApplication, QListWidgetItem) 
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize
-from PyQt6.QtGui import QColor, QCursor
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QTabWidget,
+                             QVBoxLayout, QHBoxLayout, QFrame,
+                             QApplication, QListWidgetItem, QLineEdit)
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
 
 from src.workers import GlobalInputListener
 from src.ui.widgets import VideoCard, DraggableListWidget
@@ -155,16 +155,17 @@ class LavidaApp(QMainWindow):
 
             if row_x and row_y:
                 self.move(int(row_x[0]), int(row_y[0]))
-            
+
             if row_w and row_h:
                 self.resize(int(row_w[0]), int(row_h[0]))
-                
+
             return (row_x is not None)
-        except:
+        except Exception:
             return False
 
     def init_db(self):
-        self.conn = sqlite3.connect("lavida.db", check_same_thread=False)
+        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lavida.db")
+        self.conn = sqlite3.connect(db_path)
         self.cursor = self.conn.cursor()
         
         self.cursor.execute("""
@@ -179,22 +180,33 @@ class LavidaApp(QMainWindow):
             )
         """)
         try: self.cursor.execute("ALTER TABLE videos ADD COLUMN tab_index INTEGER DEFAULT 0")
-        except: pass
+        except sqlite3.OperationalError: pass
         try: self.cursor.execute("ALTER TABLE videos ADD COLUMN row_order INTEGER DEFAULT 0")
-        except: pass
+        except sqlite3.OperationalError: pass
         try: self.cursor.execute("ALTER TABLE videos ADD COLUMN is_deleted INTEGER DEFAULT 0")
-        except: pass
+        except sqlite3.OperationalError: pass
         
         self.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
         self.conn.commit()
 
+    BTN_STYLE = """
+        QPushButton {
+            background: transparent;
+            color: #9b9287;
+            border: none;
+            font-size: 12px;
+            font-weight: 500;
+            padding: 4px 10px;
+        }
+        QPushButton:hover { color: #ece5da; }
+    """
+
     def setup_ui(self):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        
+
         self.layout = QVBoxLayout(self.central_widget)
-        m = 2 
-        self.layout.setContentsMargins(m, m, m, m)
+        self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
         self.central_widget.setStyleSheet("QWidget { font-family: 'Segoe UI', sans-serif; }")
 
@@ -202,69 +214,122 @@ class LavidaApp(QMainWindow):
         self.main_frame.setObjectName("MainFrame")
         self.main_frame.setStyleSheet("""
             QFrame#MainFrame {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1e1e2e, stop:1 #161625);
-                border-radius: 12px;
-                border: 2px solid #00d4ff;
+                background: #2d2926;
+                border-radius: 8px;
             }
         """)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(20)
-        shadow.setColor(QColor(0, 212, 255, 80))
-        shadow.setOffset(0, 0)
-        self.main_frame.setGraphicsEffect(shadow)
-
-        self.frame_layout = QVBoxLayout(self.main_frame)
-        self.frame_layout.setContentsMargins(12, 12, 12, 12)
-        self.frame_layout.setSpacing(5)
         self.layout.addWidget(self.main_frame)
 
+        self.frame_layout = QVBoxLayout(self.main_frame)
+        self.frame_layout.setContentsMargins(12, 10, 12, 12)
+        self.frame_layout.setSpacing(0)
+
         top_bar = QHBoxLayout()
-        title_lbl = QLabel("LAVIDA")
-        title_lbl.setStyleSheet("color: #00d4ff; font-weight: 900; font-size: 18px; letter-spacing: 2px; border: none; background: transparent;")
-        top_bar.addWidget(title_lbl)
+        top_bar.setSpacing(0)
         top_bar.addStretch()
 
-        disable_lbl = QLabel("DISABLE")
-        disable_lbl.setStyleSheet("color: rgba(255, 255, 255, 0.3); font-size: 10px; font-weight: bold; margin-right: 4px;")
-        top_bar.addWidget(disable_lbl)
+        search_btn = QPushButton("Search")
+        search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        search_btn.clicked.connect(self.toggle_search)
+        search_btn.setStyleSheet(self.BTN_STYLE)
+        top_bar.addWidget(search_btn)
 
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(24, 24)
+        close_btn = QPushButton("Close")
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.clicked.connect(self.close_application)
-        close_btn.setStyleSheet("QPushButton { background-color: rgba(255, 255, 255, 0.05); color: white; border-radius: 12px; font-weight: bold; border: none; font-size: 12px; } QPushButton:hover { background-color: #ff4757; }")
+        close_btn.clicked.connect(self.hide)
+        close_btn.setStyleSheet(self.BTN_STYLE)
         top_bar.addWidget(close_btn)
+
+        disable_btn = QPushButton("Disable")
+        disable_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        disable_btn.clicked.connect(self.close_application)
+        disable_btn.setStyleSheet(self.BTN_STYLE)
+        top_bar.addWidget(disable_btn)
+
         self.frame_layout.addLayout(top_bar)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("search...")
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                background: transparent;
+                border: none;
+                border-bottom: 1px solid #3e3832;
+                color: #ece5da;
+                padding: 6px 2px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border-bottom: 1px solid #6b6259;
+            }
+        """)
+        self.search_input.textChanged.connect(self.filter_videos)
+        self.search_input.hide()
+        self.frame_layout.addWidget(self.search_input)
 
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("""
-            QTabWidget::pane { border: 0; background: transparent; margin-top: 15px; }
-            QTabBar::tab { background: rgba(255, 255, 255, 0.05); color: #888; padding: 4px 0px; width: 50px; height: 22px; margin-right: 8px; border-radius: 11px; font-weight: bold; font-size: 11px; border: 1px solid transparent; }
-            QTabBar::tab:selected { background: rgba(0, 212, 255, 0.15); color: #00d4ff; border: 1px solid rgba(0, 212, 255, 0.4); }
-            QTabBar::tab:hover { background: rgba(255, 255, 255, 0.1); color: white; }
+            QTabWidget::pane { border: none; background: transparent; margin-top: 10px; }
+            QTabBar::tab {
+                background: transparent;
+                color: #6b6259;
+                padding: 5px 0px;
+                width: 54px;
+                height: 24px;
+                margin-right: 8px;
+                font-weight: 500;
+                font-size: 12px;
+                border: none;
+                border-bottom: 1px solid transparent;
+            }
+            QTabBar::tab:selected {
+                color: #ece5da;
+                border-bottom: 1px solid #c96442;
+            }
+            QTabBar::tab:hover { color: #9b9287; }
         """)
 
         self.tab_lists = []
         for i in range(1, 4):
             lst = DraggableListWidget(self, i)
             self.tab_lists.append(lst)
-            self.tabs.addTab(lst, f"TAB {i}")
+            self.tabs.addTab(lst, f"tab {i}")
 
         self.history_list = DraggableListWidget(self, 99)
-        self.history_list.setStyleSheet("""
-            QListWidget { background: rgba(0,0,0,0.2); border-radius: 8px; }
-            QListWidget::item { opacity: 0.7; }
-        """)
         self.tab_lists.append(self.history_list)
-        self.tabs.addTab(self.history_list, "HISTORY")
+        self.tabs.addTab(self.history_list, "history")
 
+        self.tabs.currentChanged.connect(lambda: self.filter_videos(self.search_input.text()))
         self.frame_layout.addWidget(self.tabs)
-        
-        self.empty_lbl = QLabel("Drop YouTube links here")
+
+        self.empty_lbl = QLabel("drop youtube links here")
         self.empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_lbl.setStyleSheet("color: rgba(255,255,255,30); font-size: 12px; font-weight: bold; border:none;")
+        self.empty_lbl.setStyleSheet("color: #6b6259; font-size: 13px; border: none;")
         self.frame_layout.addWidget(self.empty_lbl)
         self.empty_lbl.hide()
+
+    def toggle_search(self):
+        if self.search_input.isVisible():
+            self.search_input.clear()
+            self.search_input.hide()
+        else:
+            self.search_input.show()
+            self.search_input.setFocus()
+
+    def filter_videos(self, text):
+        text = text.lower()
+        for tab_list in self.tab_lists:
+            for i in range(tab_list.count()):
+                item = tab_list.item(i)
+                title = item.data(Qt.ItemDataRole.UserRole + 3) or ""
+                item.setHidden(text not in title.lower())
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self.search_input.isVisible():
+            self.search_input.clear()
+            self.search_input.hide()
+        else:
+            super().keyPressEvent(event)
 
     def check_empty_state(self):
         total_items = sum(lst.count() for lst in self.tab_lists)
@@ -309,7 +374,8 @@ class LavidaApp(QMainWindow):
         item.setData(Qt.ItemDataRole.UserRole + 1, vid_id)
         item.setData(Qt.ItemDataRole.UserRole + 2, watched)
         item.setData(Qt.ItemDataRole.UserRole + 3, title)
-        card = VideoCard(vid_id, title, url, watched, self, item)
+        is_history = (target_list == self.history_list)
+        card = VideoCard(vid_id, title, url, watched, self, item, is_history=is_history)
         target_list.setItemWidget(item, card)
 
     def mark_as_watched(self, vid_id, card_widget):
@@ -342,6 +408,23 @@ class LavidaApp(QMainWindow):
             watched = item.data(Qt.ItemDataRole.UserRole + 2)
             self.create_card_item(vid_id, title, url, watched, self.history_list)
 
+        self.check_empty_state()
+
+    def restore_video(self, vid_id, item):
+        self.cursor.execute("SELECT tab_index FROM videos WHERE id = ?", (vid_id,))
+        row = self.cursor.fetchone()
+        target_tab = row[0] if row and row[0] < 3 else 0
+
+        self.cursor.execute("UPDATE videos SET is_deleted=0 WHERE id = ?", (vid_id,))
+        self.conn.commit()
+
+        list_widget = item.listWidget()
+        list_widget.takeItem(list_widget.row(item))
+
+        title = item.data(Qt.ItemDataRole.UserRole + 3)
+        url = item.data(Qt.ItemDataRole.UserRole)
+        watched = item.data(Qt.ItemDataRole.UserRole + 2)
+        self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_tab], insert_top=True)
         self.check_empty_state()
 
     def dragEnterEvent(self, event):
@@ -379,7 +462,8 @@ class LavidaApp(QMainWindow):
             title = url
             if soup.title: title = soup.title.string.replace("- YouTube", "").strip()
             self.update_title_signal.emit(title, vid_id, tab_index)
-        except: pass
+        except Exception:
+            self.update_title_signal.emit(url, vid_id, tab_index)
 
     def update_item_title(self, title, vid_id, tab_index):
         self.cursor.execute("UPDATE videos SET title = ? WHERE id = ?", (title, vid_id))
