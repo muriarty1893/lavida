@@ -27,3 +27,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Auto-hide when another app goes fullscreen
 - Search/filter across videos
 - "Add current video" button (grabs URL from active browser)
+- Video thumbnail preview on hover
