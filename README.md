@@ -5,7 +5,7 @@ A lightweight, always-on-top Linux desktop widget for managing YouTube video lin
 ## Features
 
 - **Drag & drop** YouTube URLs onto the window to save them
-- **3 tabs** for organizing videos + a history tab for deleted items
+- **Customizable tabs** for organizing videos + a history tab for deleted items
 - **Auto-fetches** video titles and thumbnails
 - **Always on top** with frameless, resizable window
 - **Global hotkey** (mouse scroll right) to toggle visibility
@@ -13,6 +13,8 @@ A lightweight, always-on-top Linux desktop widget for managing YouTube video lin
 - **Auto-hide** when another app goes fullscreen
 - **Search** across all your saved videos
 - **Drag to reorder** within tabs
+- **Theme support** with 5 accent color presets
+- **Settings panel** for theme, startup, and shortcut reference
 
 ## Installation
 
@@ -39,11 +41,13 @@ python main.py
 | Right click | Mark as unwatched |
 | Middle click | Delete to history |
 | Mouse scroll right | Toggle window visibility (global) |
+| Double-click tab | Rename tab |
 
 ### Buttons
 
 - **+ Add** - Grab the current browser URL and add it
 - **Search** - Filter videos by title
+- **⚙** - Open settings panel
 - **Hide** - Hide the window (bring back with scroll right)
 - **Quit** - Exit the application
 

@@ -6,9 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Settings panel with theme selection, startup options, and shortcut reference
+- 5 accent color themes: Rust (default), Ocean, Forest, Amethyst, Cyan
+- Customizable tab names (double-click to rename)
+- "No results found" message when search has no matches
+- "Start visible" option in settings
+- Logging for error visibility (replaces silent `except: pass`)
+
 ### Changed
 - Redesigned UI with semantic color system, polished buttons, tabs, cards, and search input
 - Updated button labels for clarity ("+ Add", "Hide", "Quit")
+- Extracted database operations into `Database` class (`src/database.py`)
+- Extracted color tokens into shared `src/theme.py` module
 
 ## [0.1.0] - 2026-02-23
 

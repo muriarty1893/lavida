@@ -41,11 +41,13 @@ The app uses:
 lavida/
   main.py              # Entry point
   src/
+    database.py        # Database class (centralized DB operations)
+    theme.py           # Shared color tokens and theme presets
+    workers.py         # Background threads (global input listener)
     ui/
       main_window.py   # Main application window
+      settings_dialog.py # Settings panel (theme, startup, shortcuts)
       widgets.py       # VideoCard, DraggableListWidget, etc.
-    workers.py         # Background threads (global input listener)
-    database.py        # Database helpers
 ```
 
 ## Submitting Changes

@@ -27,11 +27,13 @@ lavida/
 │   └── *.png
 ├── src/
 │   ├── __init__.py
-│   ├── database.py            # Database helper (stub)
+│   ├── database.py            # Database class - centralized DB operations
+│   ├── theme.py               # Shared color tokens, theme presets, apply_theme()
 │   ├── workers.py             # GlobalInputListener - QThread for mouse scroll events
 │   └── ui/
 │       ├── __init__.py
-│       ├── main_window.py     # LavidaApp - main window, DB operations, drag-drop, UI setup
+│       ├── main_window.py     # LavidaApp - main window, drag-drop, UI setup
+│       ├── settings_dialog.py # SettingsDialog - theme, startup, shortcuts panel
 │       └── widgets.py         # VideoCard, DraggableListWidget, DragHandle, ThumbnailPreview
 ├── thumbnails/                # Cached YouTube thumbnails (gitignored, auto-generated)
 │   └── *.jpg
@@ -55,7 +57,9 @@ lavida/
 
 ## Key Classes
 
-- **LavidaApp** (`src/ui/main_window.py`): Main application window. Handles database operations, drag-drop, window resizing, tab management, fullscreen detection, title fetching, and all core functionality.
+- **Database** (`src/database.py`): Centralized database operations - video CRUD, settings persistence, schema migrations.
+- **LavidaApp** (`src/ui/main_window.py`): Main application window. Handles drag-drop, window resizing, tab management, fullscreen detection, title fetching, and all core UI.
+- **SettingsDialog** (`src/ui/settings_dialog.py`): Settings panel with theme selection, startup options, and shortcut reference.
 - **VideoCard** (`src/ui/widgets.py`): Individual video item widget displaying title and thumbnail with watched/unwatched state.
 - **DraggableListWidget** (`src/ui/widgets.py`): Tab list widget supporting drag-and-drop reordering of videos.
 - **DragHandle** (`src/ui/widgets.py`): Visual grip handle (6-dot pattern) for dragging videos.
@@ -66,13 +70,16 @@ lavida/
 
 ### UI Design
 - **Frameless, translucent window** with custom drag/resize handling
-- **Dark warm theme** with rust/terracotta (`#c96442`) accent color
-- **4 tabs**: 3 work tabs + 1 History tab
+- **Dark warm theme** with 5 switchable accent color presets (Rust, Ocean, Forest, Amethyst, Cyan)
+- **4 tabs**: 3 renameable work tabs + 1 History tab
 - **Always-on-top** window for quick access
 - **Fullscreen detection** auto-hides when other apps go fullscreen
 
-### Semantic Color System
-| Token | Value | Usage |
+### Semantic Color System (`src/theme.py`)
+
+Base colors are constant; accent colors change with the selected theme.
+
+| Token | Default Value | Usage |
 |-------|-------|-------|
 | `CLR_BASE` | `#1a1714` | Very dark brown background |
 | `CLR_SURFACE` | `#231f1b` | Slightly lighter surface |
@@ -82,9 +89,11 @@ lavida/
 | `CLR_TEXT` | `#e8e0d4` | Primary text (warm light) |
 | `CLR_TEXT_DIM` | `#8a7f73` | Secondary text |
 | `CLR_TEXT_MUTED` | `#6b6259` | Tertiary text |
-| `CLR_ACCENT` | `#c96442` | Rust/terracotta primary accent |
+| `CLR_ACCENT` | `#c96442` | Primary accent (changes with theme) |
 | `CLR_ACCENT_HOVER` | `#db7a58` | Lighter accent on hover |
 | `CLR_ACCENT_SUBTLE` | `rgba(201, 100, 66, 0.12)` | Subtle accent background |
+
+**Theme presets:** Rust (default), Ocean, Forest, Amethyst, Cyan
 
 ### User Interactions
 | Action | Effect |
@@ -98,13 +107,15 @@ lavida/
 | Drag title bar area | Move window |
 | "+ Add" button | Grab current browser URL and add video |
 | Search button | Show/hide search input to filter videos |
+| Settings button (⚙) | Open settings panel |
 | Hide button | Hide window |
 | Quit button | Exit application |
+| Double-click tab | Rename tab |
 
 ### Database Schema
 SQLite database (`lavida.db`) stores:
 - **videos**: id, url, title, watched status, tab assignment, display order, deletion flag, thumbnail_path
-- **settings**: window position and size (persisted across sessions)
+- **settings**: window position/size, theme, tab names, start_visible (persisted across sessions)
 
 ### Threading Model
 - **Main thread**: PyQt6 event loop, UI rendering
@@ -143,15 +154,16 @@ python main.py
 - Use `QThread` subclasses for background work (not Python `threading`)
 
 ### Database Access
-- All database operations are in `LavidaApp` (centralized)
-- Use `sqlite3` context managers for safe connection handling
+
+- All database operations are in `Database` class (`src/database.py`)
+- `LavidaApp` accesses DB via `self.db` instance
 - Database is auto-created on first run if not present
 - Schema migrations handled via `ALTER TABLE` with try/except
 
 ### Styling
 - All widget styling uses PyQt6 `setStyleSheet()` with inline CSS
-- Use semantic color tokens defined as class attributes on `LavidaApp`
-- Primary accent color: `#c96442` (rust/terracotta)
+- Use semantic color tokens from `src/theme.py` (imported as `import src.theme as theme`)
+- Primary accent color: theme-dependent (default `#c96442` rust/terracotta)
 - Background: warm dark brown (`#1a1714`)
 - Text: warm light (`#e8e0d4`)
 - Font family: Inter, Segoe UI, SF Pro Display (system fallbacks)

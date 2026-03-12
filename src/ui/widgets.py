@@ -5,17 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout, QFrame,
 from PyQt6.QtCore import Qt, QSize, QRectF, QTimer, QPoint
 from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPixmap
 
-
-# -- Semantic Design Tokens (shared) --
-CLR_BASE = "#1a1714"
-CLR_SURFACE = "#231f1b"
-CLR_ELEVATED = "#2e2921"
-CLR_BORDER = "#3a332c"
-CLR_BORDER_HOVER = "#524a40"
-CLR_TEXT = "#e8e0d4"
-CLR_TEXT_DIM = "#8a7f73"
-CLR_TEXT_MUTED = "#6b6259"
-CLR_ACCENT = "#c96442"
+import src.theme as theme
 
 
 class ThumbnailPreview(QLabel):
@@ -39,8 +29,8 @@ class ThumbnailPreview(QLabel):
         self.setFixedSize(248, 148)
         self.setStyleSheet(f"""
             QLabel {{
-                background: {CLR_SURFACE};
-                border: 1px solid {CLR_BORDER};
+                background: {theme.CLR_SURFACE};
+                border: 1px solid {theme.CLR_BORDER};
                 border-radius: 10px;
                 padding: 4px;
             }}
@@ -121,7 +111,7 @@ class VideoCard(QFrame):
         self.thumb_lbl = QLabel()
         self.thumb_lbl.setFixedSize(48, 36)
         self.thumb_lbl.setStyleSheet(f"""
-            background: {CLR_BASE};
+            background: {theme.CLR_BASE};
             border-radius: 4px;
         """)
         self.thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -129,7 +119,7 @@ class VideoCard(QFrame):
 
         self.title_lbl = QLabel(title)
         self.title_lbl.setStyleSheet(f"""
-            color: {CLR_TEXT};
+            color: {theme.CLR_TEXT};
             font-size: 12px;
             font-weight: 500;
         """)
@@ -142,7 +132,7 @@ class VideoCard(QFrame):
             self.restore_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent;
-                    color: {CLR_TEXT_MUTED};
+                    color: {theme.CLR_TEXT_MUTED};
                     border: 1px solid transparent;
                     border-radius: 4px;
                     font-size: 10px;
@@ -150,7 +140,7 @@ class VideoCard(QFrame):
                     padding: 2px 8px;
                 }}
                 QPushButton:hover {{
-                    color: {CLR_ACCENT};
+                    color: {theme.CLR_ACCENT};
                     background: rgba(201, 100, 66, 0.10);
                     border: 1px solid rgba(201, 100, 66, 0.15);
                 }}
@@ -164,7 +154,7 @@ class VideoCard(QFrame):
         self.del_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                color: {CLR_TEXT_MUTED};
+                color: {theme.CLR_TEXT_MUTED};
                 border: none;
                 border-radius: 4px;
                 font-size: 14px;
@@ -197,7 +187,7 @@ class VideoCard(QFrame):
         font.setStrikeOut(True)
         self.title_lbl.setFont(font)
         self.title_lbl.setStyleSheet(f"""
-            color: {CLR_TEXT_MUTED};
+            color: {theme.CLR_TEXT_MUTED};
             font-size: 12px;
             font-weight: 500;
         """)
@@ -207,7 +197,7 @@ class VideoCard(QFrame):
         font.setStrikeOut(False)
         self.title_lbl.setFont(font)
         self.title_lbl.setStyleSheet(f"""
-            color: {CLR_TEXT};
+            color: {theme.CLR_TEXT};
             font-size: 12px;
             font-weight: 500;
         """)

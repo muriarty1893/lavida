@@ -1,6 +1,6 @@
 import os
 import re
-import sqlite3
+import logging
 import subprocess
 import requests
 import threading
@@ -8,33 +8,42 @@ from bs4 import BeautifulSoup
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QTabWidget,
                              QVBoxLayout, QHBoxLayout, QFrame,
-                             QApplication, QListWidgetItem, QLineEdit)
+                             QApplication, QListWidgetItem, QLineEdit, QInputDialog)
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QTimer
 
+import src.theme as theme
+from src.database import Database
 from src.workers import GlobalInputListener
 from src.ui.widgets import VideoCard, DraggableListWidget
+
+logger = logging.getLogger(__name__)
+
 
 class LavidaApp(QMainWindow):
     update_title_signal = pyqtSignal(str, str, int, int)
 
     def __init__(self):
         super().__init__()
-        
+
         self.setWindowTitle("Lavida")
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | 
-                            Qt.WindowType.WindowStaysOnTopHint | 
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint |
+                            Qt.WindowType.WindowStaysOnTopHint |
                             Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        
-        self.setMinimumSize(300, 400) 
-        self.resize(340, 600)         
-        
-        self.setAcceptDrops(True)
-        self.setMouseTracking(True) 
 
-        self.init_db()
-        
-        if not self.load_settings():
+        self.setMinimumSize(300, 400)
+        self.resize(340, 600)
+
+        self.setAcceptDrops(True)
+        self.setMouseTracking(True)
+
+        self.db = Database()
+
+        # Load theme before building UI
+        saved_theme = self.db.load_setting('theme', theme.DEFAULT_THEME)
+        theme.apply_theme(saved_theme)
+
+        if not self._load_window_position():
             self.position_left_center()
 
         self.setup_ui()
@@ -45,11 +54,11 @@ class LavidaApp(QMainWindow):
         self.listener = GlobalInputListener()
         self.listener.toggle_signal.connect(self.toggle_visibility)
         self.listener.start()
-        
-        self.resize_margin = 10       
-        self.current_edge = None      
-        self.is_resizing = False      
-        self.old_pos = None           
+
+        self.resize_margin = 10
+        self.current_edge = None
+        self.is_resizing = False
+        self.old_pos = None
 
         self._hidden_by_fullscreen = False
         self._fullscreen_timer = QTimer(self)
@@ -62,14 +71,16 @@ class LavidaApp(QMainWindow):
         new_y = (screen.height() - self.height()) // 2
         self.move(20, new_y)
 
+    # -- Window drag / resize --
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.current_edge = self.check_edge(event.pos())
-            
+
             if self.current_edge:
                 self.is_resizing = True
-                self.start_geometry = self.geometry()      
-                self.start_mouse_pos = event.globalPosition() 
+                self.start_geometry = self.geometry()
+                self.start_mouse_pos = event.globalPosition()
             else:
                 self.is_resizing = False
                 self.old_pos = event.globalPosition().toPoint()
@@ -83,7 +94,7 @@ class LavidaApp(QMainWindow):
         if self.is_resizing:
             delta = event.globalPosition() - self.start_mouse_pos
             geom = self.start_geometry
-            
+
             x, y, w, h = geom.x(), geom.y(), geom.width(), geom.height()
             dx, dy = delta.x(), delta.y()
 
@@ -97,7 +108,7 @@ class LavidaApp(QMainWindow):
                 h -= dy
             if "BOTTOM" in self.current_edge:
                 h += dy
-            
+
             if w > self.minimumWidth() and h > self.minimumHeight():
                 self.setGeometry(int(x), int(y), int(w), int(h))
 
@@ -112,20 +123,20 @@ class LavidaApp(QMainWindow):
             self.old_pos = None
             self.current_edge = None
             self.setCursor(Qt.CursorShape.ArrowCursor)
-            self.save_settings() 
+            self._save_window_position()
 
     def check_edge(self, pos):
         x, y = pos.x(), pos.y()
         w, h = self.width(), self.height()
         m = self.resize_margin
-        
+
         edge = ""
         if y < m: edge += "TOP"
         elif y > h - m: edge += "BOTTOM"
-        
+
         if x < m: edge += "LEFT"
         elif x > w - m: edge += "RIGHT"
-        
+
         return edge if edge else None
 
     def set_cursor_shape(self, edge):
@@ -142,170 +153,168 @@ class LavidaApp(QMainWindow):
         elif edge in ["TOP", "BOTTOM"]:
             self.setCursor(Qt.CursorShape.SizeVerCursor)
 
-    def save_settings(self):
-        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('pos_x', ?)", (str(self.x()),))
-        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('pos_y', ?)", (str(self.y()),))
-        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('width', ?)", (str(self.width()),))
-        self.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('height', ?)", (str(self.height()),))
-        self.conn.commit()
+    # -- Settings persistence --
 
-    def load_settings(self):
-        try:
-            self.cursor.execute("SELECT value FROM settings WHERE key='pos_x'")
-            row_x = self.cursor.fetchone()
-            self.cursor.execute("SELECT value FROM settings WHERE key='pos_y'")
-            row_y = self.cursor.fetchone()
-            
-            self.cursor.execute("SELECT value FROM settings WHERE key='width'")
-            row_w = self.cursor.fetchone()
-            self.cursor.execute("SELECT value FROM settings WHERE key='height'")
-            row_h = self.cursor.fetchone()
+    def _save_window_position(self):
+        self.db.save_window_settings(self.x(), self.y(), self.width(), self.height())
 
-            if row_x and row_y:
-                self.move(int(row_x[0]), int(row_y[0]))
+    def _load_window_position(self):
+        result = self.db.load_window_settings()
+        if result:
+            x, y, w, h = result
+            self.move(x, y)
+            self.resize(w, h)
+            return True
+        return False
 
-            if row_w and row_h:
-                self.resize(int(row_w[0]), int(row_h[0]))
+    # -- UI setup --
 
-            return (row_x is not None)
-        except Exception:
-            return False
-
-    def init_db(self):
-        db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "lavida.db")
-        self.conn = sqlite3.connect(db_path)
-        self.cursor = self.conn.cursor()
-        
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS videos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT,
-                title TEXT,
-                watched INTEGER DEFAULT 0,
-                tab_index INTEGER DEFAULT 0,
-                row_order INTEGER DEFAULT 0,
-                is_deleted INTEGER DEFAULT 0
-            )
-        """)
-        try: self.cursor.execute("ALTER TABLE videos ADD COLUMN tab_index INTEGER DEFAULT 0")
-        except sqlite3.OperationalError: pass
-        try: self.cursor.execute("ALTER TABLE videos ADD COLUMN row_order INTEGER DEFAULT 0")
-        except sqlite3.OperationalError: pass
-        try: self.cursor.execute("ALTER TABLE videos ADD COLUMN is_deleted INTEGER DEFAULT 0")
-        except sqlite3.OperationalError: pass
-        try: self.cursor.execute("ALTER TABLE videos ADD COLUMN thumbnail_path TEXT DEFAULT ''")
-        except sqlite3.OperationalError: pass
-        
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
-        self.conn.commit()
-
-        self.thumbnails_dir = os.path.join(os.path.dirname(db_path), "thumbnails")
-        os.makedirs(self.thumbnails_dir, exist_ok=True)
-
-    # -- Semantic Design Tokens --
-    CLR_BASE = "#1a1714"
-    CLR_SURFACE = "#231f1b"
-    CLR_ELEVATED = "#2e2921"
-    CLR_BORDER = "#3a332c"
-    CLR_BORDER_HOVER = "#524a40"
-    CLR_TEXT = "#e8e0d4"
-    CLR_TEXT_DIM = "#8a7f73"
-    CLR_TEXT_MUTED = "#6b6259"
-    CLR_ACCENT = "#c96442"
-    CLR_ACCENT_HOVER = "#db7a58"
-    CLR_ACCENT_SUBTLE = "rgba(201, 100, 66, 0.12)"
-
-    BTN_STYLE = """
-        QPushButton {
-            background: transparent;
-            color: #8a7f73;
-            border: 1px solid transparent;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.3px;
-            padding: 5px 12px;
-        }
-        QPushButton:hover {
-            color: #e8e0d4;
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-        }
-    """
+    def _btn_style(self):
+        return f"""
+            QPushButton {{
+                background: transparent;
+                color: {theme.CLR_TEXT_DIM};
+                border: 1px solid transparent;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                padding: 5px 12px;
+            }}
+            QPushButton:hover {{
+                color: {theme.CLR_TEXT};
+                background: rgba(255, 255, 255, 0.06);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+            }}
+        """
 
     def setup_ui(self):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
-        self.layout = QVBoxLayout(self.central_widget)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
+        self.main_layout = QVBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
         self.central_widget.setStyleSheet(
             "QWidget { font-family: 'Inter', 'Segoe UI', 'SF Pro Display', sans-serif; }"
         )
 
         self.main_frame = QFrame()
         self.main_frame.setObjectName("MainFrame")
-        self.main_frame.setStyleSheet(f"""
-            QFrame#MainFrame {{
-                background: {self.CLR_SURFACE};
-                border: 1px solid {self.CLR_BORDER};
-                border-radius: 12px;
-            }}
-        """)
-        self.layout.addWidget(self.main_frame)
-
         self.frame_layout = QVBoxLayout(self.main_frame)
         self.frame_layout.setContentsMargins(8, 8, 8, 12)
         self.frame_layout.setSpacing(0)
+        self.main_layout.addWidget(self.main_frame)
 
         # -- Top bar --
         top_bar = QHBoxLayout()
         top_bar.setSpacing(4)
         top_bar.setContentsMargins(4, 0, 4, 0)
 
-        add_btn = QPushButton("+ Add")
-        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        add_btn.clicked.connect(self.add_current_video)
-        add_btn.setStyleSheet(f"""
+        self.add_btn = QPushButton("+ Add")
+        self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_btn.clicked.connect(self.add_current_video)
+        top_bar.addWidget(self.add_btn)
+
+        top_bar.addStretch()
+
+        self.search_btn = QPushButton("Search")
+        self.search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.search_btn.clicked.connect(self.toggle_search)
+        top_bar.addWidget(self.search_btn)
+
+        self.settings_btn = QPushButton("\u2699")
+        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_btn.clicked.connect(self._open_settings)
+        top_bar.addWidget(self.settings_btn)
+
+        self.hide_btn = QPushButton("Hide")
+        self.hide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hide_btn.clicked.connect(self.hide)
+        top_bar.addWidget(self.hide_btn)
+
+        self.quit_btn = QPushButton("Quit")
+        self.quit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.quit_btn.clicked.connect(self.close_application)
+        top_bar.addWidget(self.quit_btn)
+
+        self.frame_layout.addLayout(top_bar)
+
+        # -- Search input --
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search videos...")
+        self.search_input.textChanged.connect(self.filter_videos)
+        self.search_input.hide()
+        self.frame_layout.addWidget(self.search_input)
+
+        # -- No results label --
+        self.no_results_lbl = QLabel("No results found")
+        self.no_results_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.no_results_lbl.hide()
+        self.frame_layout.addWidget(self.no_results_lbl)
+
+        # -- Tabs --
+        self.tabs = QTabWidget()
+        self.tabs.tabBarDoubleClicked.connect(self._rename_tab)
+
+        self.tab_lists = []
+        for i in range(3):
+            lst = DraggableListWidget(self, i)
+            self.tab_lists.append(lst)
+            tab_name = self.db.load_setting(f'tab_name_{i}', f"Tab {i + 1}")
+            self.tabs.addTab(lst, tab_name)
+
+        self.history_list = DraggableListWidget(self, 99)
+        self.tab_lists.append(self.history_list)
+        self.tabs.addTab(self.history_list, "History")
+
+        self.tabs.currentChanged.connect(lambda: self.filter_videos(self.search_input.text()))
+        self.frame_layout.addWidget(self.tabs)
+
+        self.empty_lbl = QLabel("Drop YouTube links here")
+        self.empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.frame_layout.addWidget(self.empty_lbl)
+        self.empty_lbl.hide()
+
+        # Apply all styles
+        self._apply_styles()
+
+    def _apply_styles(self):
+        """Apply or re-apply all stylesheets using current theme colors."""
+        self.main_frame.setStyleSheet(f"""
+            QFrame#MainFrame {{
+                background: {theme.CLR_SURFACE};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 12px;
+            }}
+        """)
+
+        self.add_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {self.CLR_ACCENT_SUBTLE};
-                color: {self.CLR_ACCENT};
-                border: 1px solid rgba(201, 100, 66, 0.20);
+                background: {theme.CLR_ACCENT_SUBTLE};
+                color: {theme.CLR_ACCENT};
+                border: 1px solid {theme.accent_rgba(0.20)};
                 border-radius: 6px;
                 font-size: 11px;
                 font-weight: 700;
                 padding: 5px 14px;
             }}
             QPushButton:hover {{
-                background: rgba(201, 100, 66, 0.22);
-                color: {self.CLR_ACCENT_HOVER};
-                border: 1px solid rgba(201, 100, 66, 0.35);
+                background: {theme.accent_rgba(0.22)};
+                color: {theme.CLR_ACCENT_HOVER};
+                border: 1px solid {theme.accent_rgba(0.35)};
             }}
         """)
-        top_bar.addWidget(add_btn)
 
-        top_bar.addStretch()
+        btn_style = self._btn_style()
+        self.search_btn.setStyleSheet(btn_style)
+        self.settings_btn.setStyleSheet(btn_style)
+        self.hide_btn.setStyleSheet(btn_style)
 
-        search_btn = QPushButton("Search")
-        search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        search_btn.clicked.connect(self.toggle_search)
-        search_btn.setStyleSheet(self.BTN_STYLE)
-        top_bar.addWidget(search_btn)
-
-        close_btn = QPushButton("Hide")
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.clicked.connect(self.hide)
-        close_btn.setStyleSheet(self.BTN_STYLE)
-        top_bar.addWidget(close_btn)
-
-        disable_btn = QPushButton("Quit")
-        disable_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        disable_btn.clicked.connect(self.close_application)
-        disable_btn.setStyleSheet(f"""
+        self.quit_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
-                color: #8a7f73;
+                color: {theme.CLR_TEXT_DIM};
                 border: 1px solid transparent;
                 border-radius: 6px;
                 font-size: 11px;
@@ -319,33 +328,30 @@ class LavidaApp(QMainWindow):
                 border: 1px solid rgba(224, 82, 82, 0.15);
             }}
         """)
-        top_bar.addWidget(disable_btn)
 
-        self.frame_layout.addLayout(top_bar)
-
-        # -- Search input --
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search videos...")
         self.search_input.setStyleSheet(f"""
             QLineEdit {{
-                background: {self.CLR_BASE};
-                border: 1px solid {self.CLR_BORDER};
+                background: {theme.CLR_BASE};
+                border: 1px solid {theme.CLR_BORDER};
                 border-radius: 8px;
-                color: {self.CLR_TEXT};
+                color: {theme.CLR_TEXT};
                 padding: 8px 12px;
                 margin: 8px 4px 0px 4px;
                 font-size: 12px;
             }}
             QLineEdit:focus {{
-                border: 1px solid {self.CLR_ACCENT};
+                border: 1px solid {theme.CLR_ACCENT};
             }}
         """)
-        self.search_input.textChanged.connect(self.filter_videos)
-        self.search_input.hide()
-        self.frame_layout.addWidget(self.search_input)
 
-        # -- Tabs --
-        self.tabs = QTabWidget()
+        self.no_results_lbl.setStyleSheet(f"""
+            color: {theme.CLR_TEXT_MUTED};
+            font-size: 12px;
+            font-weight: 500;
+            border: none;
+            padding: 20px 0px;
+        """)
+
         self.tabs.setStyleSheet(f"""
             QTabWidget::pane {{
                 border: none;
@@ -357,7 +363,7 @@ class LavidaApp(QMainWindow):
             }}
             QTabBar::tab {{
                 background: transparent;
-                color: {self.CLR_TEXT_MUTED};
+                color: {theme.CLR_TEXT_MUTED};
                 padding: 6px 4px;
                 min-width: 48px;
                 margin: 4px 2px 0px 2px;
@@ -369,61 +375,126 @@ class LavidaApp(QMainWindow):
                 border-radius: 0px;
             }}
             QTabBar::tab:selected {{
-                color: {self.CLR_TEXT};
-                border-bottom: 2px solid {self.CLR_ACCENT};
+                color: {theme.CLR_TEXT};
+                border-bottom: 2px solid {theme.CLR_ACCENT};
             }}
             QTabBar::tab:hover:!selected {{
-                color: {self.CLR_TEXT_DIM};
+                color: {theme.CLR_TEXT_DIM};
             }}
         """)
 
-        self.tab_lists = []
-        for i in range(1, 4):
-            lst = DraggableListWidget(self, i)
-            self.tab_lists.append(lst)
-            self.tabs.addTab(lst, f"Tab {i}")
-
-        self.history_list = DraggableListWidget(self, 99)
-        self.tab_lists.append(self.history_list)
-        self.tabs.addTab(self.history_list, "History")
-
-        self.tabs.currentChanged.connect(lambda: self.filter_videos(self.search_input.text()))
-        self.frame_layout.addWidget(self.tabs)
-
-        self.empty_lbl = QLabel("Drop YouTube links here")
-        self.empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_lbl.setStyleSheet(f"""
-            color: {self.CLR_TEXT_MUTED};
+            color: {theme.CLR_TEXT_MUTED};
             font-size: 13px;
             font-weight: 500;
             border: none;
             padding: 32px 0px;
         """)
-        self.frame_layout.addWidget(self.empty_lbl)
-        self.empty_lbl.hide()
+
+    def refresh_styles(self):
+        """Refresh all styles and reload data after theme change."""
+        self._apply_styles()
+        self.load_data()
+
+    # -- Tab rename --
+
+    def _rename_tab(self, index):
+        if index >= 3:
+            return  # Don't rename History tab
+
+        current_name = self.tabs.tabText(index)
+
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Rename Tab")
+        dialog.setLabelText("Tab name:")
+        dialog.setTextValue(current_name)
+        dialog.setStyleSheet(f"""
+            QInputDialog, QDialog {{
+                background: {theme.CLR_SURFACE};
+            }}
+            QLabel {{
+                color: {theme.CLR_TEXT};
+                font-size: 12px;
+            }}
+            QLineEdit {{
+                background: {theme.CLR_BASE};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 6px;
+                color: {theme.CLR_TEXT};
+                padding: 6px 10px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {theme.CLR_ACCENT};
+            }}
+            QPushButton {{
+                background: {theme.CLR_ELEVATED};
+                color: {theme.CLR_TEXT};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background: {theme.CLR_BORDER};
+            }}
+        """)
+
+        if dialog.exec():
+            new_name = dialog.textValue().strip()
+            if new_name:
+                self.tabs.setTabText(index, new_name)
+                self.db.save_setting(f'tab_name_{index}', new_name)
+
+    # -- Settings dialog --
+
+    def _open_settings(self):
+        from src.ui.settings_dialog import SettingsDialog
+        dialog = SettingsDialog(self, self.db)
+        dialog.exec()
+
+    # -- Search --
 
     def toggle_search(self):
         if self.search_input.isVisible():
             self.search_input.clear()
             self.search_input.hide()
+            self.no_results_lbl.hide()
         else:
             self.search_input.show()
             self.search_input.setFocus()
 
     def filter_videos(self, text):
         text = text.lower()
+        current_idx = self.tabs.currentIndex()
+        current_list = self.tab_lists[current_idx] if current_idx < len(self.tab_lists) else None
+
+        has_visible = False
         for tab_list in self.tab_lists:
             for i in range(tab_list.count()):
                 item = tab_list.item(i)
                 title = item.data(Qt.ItemDataRole.UserRole + 3) or ""
-                item.setHidden(text not in title.lower())
+                hidden = text not in title.lower()
+                item.setHidden(hidden)
+                if tab_list == current_list and not hidden:
+                    has_visible = True
+
+        # Show "no results" only when searching and current tab has no visible items
+        if text and current_list and not has_visible:
+            self.no_results_lbl.show()
+        else:
+            self.no_results_lbl.hide()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self.search_input.isVisible():
             self.search_input.clear()
             self.search_input.hide()
+            self.no_results_lbl.hide()
         else:
             super().keyPressEvent(event)
+
+    # -- Empty state --
 
     def check_empty_state(self):
         total_items = sum(lst.count() for lst in self.tab_lists)
@@ -435,23 +506,23 @@ class LavidaApp(QMainWindow):
             self.tabs.show()
 
     def close_application(self):
-        self.save_settings()
+        self._save_window_position()
         QApplication.quit()
 
+    # -- Video CRUD --
+
     def update_video_order(self, vid_id, new_order):
-        self.cursor.execute("UPDATE videos SET row_order = ? WHERE id = ?", (new_order, vid_id))
-        self.conn.commit()
+        self.db.update_video_order(vid_id, new_order)
 
     def load_data(self):
-        for lst in self.tab_lists: lst.clear()
-        
-        self.cursor.execute("SELECT id, title, url, watched, tab_index, thumbnail_path FROM videos WHERE is_deleted=0 ORDER BY row_order ASC, id DESC")
-        for vid_id, title, url, watched, tab_index, thumb_path in self.cursor.fetchall():
+        for lst in self.tab_lists:
+            lst.clear()
+
+        for vid_id, title, url, watched, tab_index, thumb_path in self.db.get_active_videos():
             target_index = tab_index if tab_index < 3 else 0
             self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_index], thumbnail_path=thumb_path)
 
-        self.cursor.execute("SELECT id, title, url, watched, thumbnail_path FROM videos WHERE is_deleted=1 ORDER BY id DESC")
-        for vid_id, title, url, watched, thumb_path in self.cursor.fetchall():
+        for vid_id, title, url, watched, thumb_path in self.db.get_deleted_videos():
             self.create_card_item(vid_id, title, url, watched, self.history_list, thumbnail_path=thumb_path)
 
         self.check_empty_state()
@@ -485,30 +556,26 @@ class LavidaApp(QMainWindow):
                     w.apply_row_style(i)
 
     def mark_as_watched(self, vid_id, card_widget):
-        self.cursor.execute("UPDATE videos SET watched = 1 WHERE id = ?", (vid_id,))
-        self.conn.commit()
+        self.db.mark_watched(vid_id)
         card_widget.set_watched_style()
 
     def mark_as_unwatched(self, vid_id, card_widget):
-        self.cursor.execute("UPDATE videos SET watched = 0 WHERE id = ?", (vid_id,))
-        self.conn.commit()
+        self.db.mark_unwatched(vid_id)
         card_widget.set_unwatched_style()
 
     def delete_video(self, vid_id, item):
         list_widget = item.listWidget()
-        
+
         if list_widget == self.history_list:
-            self.cursor.execute("DELETE FROM videos WHERE id = ?", (vid_id,))
-            self.conn.commit()
+            self.db.hard_delete_video(vid_id)
             row = list_widget.row(item)
             list_widget.takeItem(row)
         else:
-            self.cursor.execute("UPDATE videos SET is_deleted=1 WHERE id = ?", (vid_id,))
-            self.conn.commit()
-            
+            self.db.soft_delete_video(vid_id)
+
             row = list_widget.row(item)
             list_widget.takeItem(row)
-            
+
             title = item.data(Qt.ItemDataRole.UserRole + 3)
             url = item.data(Qt.ItemDataRole.UserRole)
             watched = item.data(Qt.ItemDataRole.UserRole + 2)
@@ -518,12 +585,11 @@ class LavidaApp(QMainWindow):
         self.check_empty_state()
 
     def restore_video(self, vid_id, item):
-        self.cursor.execute("SELECT tab_index FROM videos WHERE id = ?", (vid_id,))
-        row = self.cursor.fetchone()
-        target_tab = row[0] if row and row[0] < 3 else 0
+        target_tab = self.db.get_video_tab(vid_id)
+        if target_tab >= 3:
+            target_tab = 0
 
-        self.cursor.execute("UPDATE videos SET is_deleted=0 WHERE id = ?", (vid_id,))
-        self.conn.commit()
+        self.db.restore_video(vid_id)
 
         list_widget = item.listWidget()
         list_widget.takeItem(list_widget.row(item))
@@ -535,35 +601,39 @@ class LavidaApp(QMainWindow):
         self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_tab], insert_top=True, thumbnail_path=thumb_path)
         self.check_empty_state()
 
+    # -- Drag & drop --
+
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls() or event.mimeData().hasText(): event.accept()
-        else: event.ignore()
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.accept()
+        else:
+            event.ignore()
 
     def dropEvent(self, event):
         url = ""
-        if event.mimeData().hasUrls(): url = event.mimeData().urls()[0].toString()
-        elif event.mimeData().hasText(): url = event.mimeData().text()
-        
+        if event.mimeData().hasUrls():
+            url = event.mimeData().urls()[0].toString()
+        elif event.mimeData().hasText():
+            url = event.mimeData().text()
+
         if "youtube.com" in url or "youtu.be" in url:
             self._add_video_url(url)
 
     def _add_video_url(self, url):
-        if self.tabs.currentIndex() == 3: 
+        if self.tabs.currentIndex() == 3:
             current_tab_index = 0
         else:
             current_tab_index = self.tabs.currentIndex()
-        
-        self.cursor.execute("SELECT MIN(row_order) FROM videos")
-        min_val = self.cursor.fetchone()[0]
-        new_order = (min_val if min_val is not None else 0) - 1
-        
-        self.cursor.execute("INSERT INTO videos (url, title, tab_index, row_order, is_deleted) VALUES (?, ?, ?, ?, 0)", (url, "Loading info...", current_tab_index, new_order))
-        self.conn.commit()
-        last_id = self.cursor.lastrowid
-        
+
+        new_order = self.db.get_min_row_order() - 1
+
+        last_id = self.db.add_video(url, "Loading info...", current_tab_index, new_order)
+
         self.create_card_item(last_id, "Loading info...", url, 0, self.tab_lists[current_tab_index], insert_top=True)
         self.check_empty_state()
         threading.Thread(target=self.fetch_title, args=(url, last_id, current_tab_index), daemon=True).start()
+
+    # -- Add from browser --
 
     def add_current_video(self):
         self.hide()
@@ -573,6 +643,7 @@ class LavidaApp(QMainWindow):
         try:
             subprocess.run(['xdotool', 'key', 'ctrl+l'], timeout=1)
         except Exception:
+            logger.warning("xdotool focus step failed", exc_info=True)
             self.show()
             return
         QTimer.singleShot(150, self._grab_step_copy)
@@ -581,6 +652,7 @@ class LavidaApp(QMainWindow):
         try:
             subprocess.run(['xdotool', 'key', 'ctrl+c'], timeout=1)
         except Exception:
+            logger.warning("xdotool copy step failed", exc_info=True)
             self.show()
             return
         QTimer.singleShot(150, self._grab_step_read)
@@ -589,7 +661,7 @@ class LavidaApp(QMainWindow):
         try:
             subprocess.run(['xdotool', 'key', 'Escape'], timeout=1)
         except Exception:
-            pass
+            logger.debug("xdotool escape step failed", exc_info=True)
 
         clipboard = QApplication.clipboard()
         url = clipboard.text().strip()
@@ -599,6 +671,8 @@ class LavidaApp(QMainWindow):
 
         self.show()
         self.activateWindow()
+
+    # -- Title / thumbnail fetching --
 
     @staticmethod
     def extract_video_id(url):
@@ -620,9 +694,10 @@ class LavidaApp(QMainWindow):
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(url, headers=headers, timeout=5)
             soup = BeautifulSoup(response.text, 'html.parser')
-            if soup.title: title = soup.title.string.replace("- YouTube", "").strip()
+            if soup.title:
+                title = soup.title.string.replace("- YouTube", "").strip()
         except Exception:
-            pass
+            logger.warning("Failed to fetch title for %s", url, exc_info=True)
 
         try:
             video_id = self.extract_video_id(url)
@@ -630,20 +705,19 @@ class LavidaApp(QMainWindow):
                 thumb_url = f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
                 resp = requests.get(thumb_url, timeout=5)
                 if resp.status_code == 200:
-                    thumb_path = os.path.join(self.thumbnails_dir, f"{video_id}.jpg")
+                    thumb_path = os.path.join(self.db.thumbnails_dir, f"{video_id}.jpg")
                     with open(thumb_path, 'wb') as f:
                         f.write(resp.content)
         except Exception:
-            pass
+            logger.warning("Failed to fetch thumbnail for %s", url, exc_info=True)
 
         self.update_title_signal.emit(title, thumb_path, vid_id, tab_index)
 
     def update_item_title(self, title, thumb_path, vid_id, tab_index):
-        self.cursor.execute("UPDATE videos SET title = ?, thumbnail_path = ? WHERE id = ?", (title, thumb_path, vid_id))
-        self.conn.commit()
-        
+        self.db.update_video_title(vid_id, title, thumb_path)
+
         target_list = self.tab_lists[tab_index] if tab_index < 3 else self.history_list
-        
+
         for i in range(target_list.count()):
             item = target_list.item(i)
             widget = target_list.itemWidget(item)
@@ -654,6 +728,8 @@ class LavidaApp(QMainWindow):
                 if thumb_path:
                     widget.set_thumbnail(thumb_path)
                 break
+
+    # -- Visibility --
 
     def toggle_visibility(self):
         if self.isHidden():
@@ -687,4 +763,4 @@ class LavidaApp(QMainWindow):
                 self._hidden_by_fullscreen = False
                 self.show()
         except Exception:
-            pass
+            logger.debug("Fullscreen check failed", exc_info=True)
