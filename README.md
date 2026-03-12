@@ -1,6 +1,6 @@
 # Lavida
 
-A lightweight, always-on-top Linux desktop widget for managing YouTube video links. Drop links, organize across tabs, and pick up where you left off.
+A lightweight, always-on-top Linux desktop widget for managing YouTube video links. Drop links, organize across tabs, and pick up where you left off. Mouse scroll right to toggle window visibility (global).
 
 ## Features
 
