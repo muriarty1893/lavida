@@ -6,6 +6,18 @@ from PyQt6.QtCore import Qt, QSize, QRectF, QTimer, QPoint
 from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPixmap
 
 
+# -- Semantic Design Tokens (shared) --
+CLR_BASE = "#1a1714"
+CLR_SURFACE = "#231f1b"
+CLR_ELEVATED = "#2e2921"
+CLR_BORDER = "#3a332c"
+CLR_BORDER_HOVER = "#524a40"
+CLR_TEXT = "#e8e0d4"
+CLR_TEXT_DIM = "#8a7f73"
+CLR_TEXT_MUTED = "#6b6259"
+CLR_ACCENT = "#c96442"
+
+
 class ThumbnailPreview(QLabel):
     """Floating popup that shows a larger thumbnail on hover."""
     _instance = None
@@ -25,13 +37,13 @@ class ThumbnailPreview(QLabel):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedSize(248, 148)
-        self.setStyleSheet("""
-            QLabel {
-                background: #2d2926;
-                border: 1px solid #3e3832;
-                border-radius: 6px;
+        self.setStyleSheet(f"""
+            QLabel {{
+                background: {CLR_SURFACE};
+                border: 1px solid {CLR_BORDER};
+                border-radius: 10px;
                 padding: 4px;
-            }
+            }}
         """)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hide()
@@ -56,7 +68,7 @@ class DragHandle(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QBrush(QColor(155, 146, 135, 80)))
+        painter.setBrush(QBrush(QColor(138, 127, 115, 70)))
         painter.setPen(Qt.PenStyle.NoPen)
 
         dot_size = 2.0
@@ -92,51 +104,81 @@ class VideoCard(QFrame):
         self._hover_timer.timeout.connect(self._show_preview)
 
         self.setObjectName("VideoCard")
-        self.setStyleSheet("""
-            QFrame#VideoCard {
+        self.setStyleSheet(f"""
+            QFrame#VideoCard {{
                 background: transparent;
                 border: none;
-                border-bottom: 1px solid #3e3832;
-            }
-            QFrame#VideoCard:hover {
-                background: #35302b;
-            }
+                border-radius: 8px;
+                margin: 0px 4px;
+            }}
+            QFrame#VideoCard:hover {{
+                background: rgba(255, 255, 255, 0.04);
+            }}
         """)
 
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(4, 2, 4, 2)
-        self.layout.setSpacing(6)
+        self.layout.setContentsMargins(6, 4, 6, 4)
+        self.layout.setSpacing(8)
 
         self.drag_handle = DragHandle()
         self.layout.addWidget(self.drag_handle)
 
         self.thumb_lbl = QLabel()
         self.thumb_lbl.setFixedSize(48, 36)
-        self.thumb_lbl.setStyleSheet("background: #1e1b18; border-radius: 3px;")
+        self.thumb_lbl.setStyleSheet(f"""
+            background: {CLR_BASE};
+            border-radius: 4px;
+        """)
         self.thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(self.thumb_lbl)
 
         self.title_lbl = QLabel(title)
-        self.title_lbl.setStyleSheet("color: #ece5da; font-size: 13px; font-weight: 400;")
+        self.title_lbl.setStyleSheet(f"""
+            color: {CLR_TEXT};
+            font-size: 12px;
+            font-weight: 500;
+        """)
         if watched: self.set_watched_style()
         self.layout.addWidget(self.title_lbl, stretch=1)
 
         if is_history:
-            self.restore_btn = QPushButton("restore")
+            self.restore_btn = QPushButton("Restore")
             self.restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.restore_btn.setStyleSheet("""
-                QPushButton { background: transparent; color: #6b6259; border: none; font-size: 11px; font-weight: 500; padding: 2px 6px; }
-                QPushButton:hover { color: #ece5da; }
+            self.restore_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    color: {CLR_TEXT_MUTED};
+                    border: 1px solid transparent;
+                    border-radius: 4px;
+                    font-size: 10px;
+                    font-weight: 600;
+                    padding: 2px 8px;
+                }}
+                QPushButton:hover {{
+                    color: {CLR_ACCENT};
+                    background: rgba(201, 100, 66, 0.10);
+                    border: 1px solid rgba(201, 100, 66, 0.15);
+                }}
             """)
             self.restore_btn.clicked.connect(self.restore_clicked)
             self.layout.addWidget(self.restore_btn)
 
-        self.del_btn = QPushButton("×")
-        self.del_btn.setFixedSize(16, 16)
+        self.del_btn = QPushButton("\u00d7")
+        self.del_btn.setFixedSize(20, 20)
         self.del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.del_btn.setStyleSheet("""
-            QPushButton { background: transparent; color: #6b6259; border: none; font-size: 15px; }
-            QPushButton:hover { color: #ece5da; }
+        self.del_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {CLR_TEXT_MUTED};
+                border: none;
+                border-radius: 4px;
+                font-size: 14px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                color: #e05252;
+                background: rgba(224, 82, 82, 0.12);
+            }}
         """)
         self.del_btn.clicked.connect(self.delete_clicked)
         self.layout.addWidget(self.del_btn)
@@ -145,13 +187,21 @@ class VideoCard(QFrame):
         font = self.title_lbl.font()
         font.setStrikeOut(True)
         self.title_lbl.setFont(font)
-        self.title_lbl.setStyleSheet("color: #6b6259; font-size: 13px; font-weight: 400;")
+        self.title_lbl.setStyleSheet(f"""
+            color: {CLR_TEXT_MUTED};
+            font-size: 12px;
+            font-weight: 500;
+        """)
 
     def set_unwatched_style(self):
         font = self.title_lbl.font()
         font.setStrikeOut(False)
         self.title_lbl.setFont(font)
-        self.title_lbl.setStyleSheet("color: #ece5da; font-size: 13px; font-weight: 400;")
+        self.title_lbl.setStyleSheet(f"""
+            color: {CLR_TEXT};
+            font-size: 12px;
+            font-weight: 500;
+        """)
 
     def delete_clicked(self):
         self.parent_window.delete_video(self.vid_id, self.list_item)
@@ -182,7 +232,7 @@ class VideoCard(QFrame):
                     pixmap.scaled(48, 36, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                   Qt.TransformationMode.SmoothTransformation)
                 )
-                self.thumb_lbl.setStyleSheet("border-radius: 3px;")
+                self.thumb_lbl.setStyleSheet("border-radius: 4px;")
 
     def enterEvent(self, event):
         if self._thumb_path:
@@ -221,12 +271,25 @@ class DraggableListWidget(QListWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
 
-        self.setSpacing(1)
-        self.setStyleSheet("""
-            QListWidget { background: transparent; border: none; outline: none; }
-            QListWidget::item { background: transparent; border: none; padding: 0px; }
-            QListWidget::item:hover { background: transparent; }
-            QListWidget::item:selected { background: transparent; }
+        self.setSpacing(2)
+        self.setStyleSheet(f"""
+            QListWidget {{
+                background: transparent;
+                border: none;
+                outline: none;
+            }}
+            QListWidget::item {{
+                background: transparent;
+                border: none;
+                border-radius: 8px;
+                padding: 0px;
+            }}
+            QListWidget::item:hover {{
+                background: transparent;
+            }}
+            QListWidget::item:selected {{
+                background: transparent;
+            }}
         """)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 

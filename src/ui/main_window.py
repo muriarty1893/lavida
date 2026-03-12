@@ -202,16 +202,35 @@ class LavidaApp(QMainWindow):
         self.thumbnails_dir = os.path.join(os.path.dirname(db_path), "thumbnails")
         os.makedirs(self.thumbnails_dir, exist_ok=True)
 
+    # -- Semantic Design Tokens --
+    CLR_BASE = "#1a1714"
+    CLR_SURFACE = "#231f1b"
+    CLR_ELEVATED = "#2e2921"
+    CLR_BORDER = "#3a332c"
+    CLR_BORDER_HOVER = "#524a40"
+    CLR_TEXT = "#e8e0d4"
+    CLR_TEXT_DIM = "#8a7f73"
+    CLR_TEXT_MUTED = "#6b6259"
+    CLR_ACCENT = "#c96442"
+    CLR_ACCENT_HOVER = "#db7a58"
+    CLR_ACCENT_SUBTLE = "rgba(201, 100, 66, 0.12)"
+
     BTN_STYLE = """
         QPushButton {
             background: transparent;
-            color: #9b9287;
-            border: none;
-            font-size: 12px;
-            font-weight: 500;
-            padding: 4px 10px;
+            color: #8a7f73;
+            border: 1px solid transparent;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            padding: 5px 12px;
         }
-        QPushButton:hover { color: #ece5da; }
+        QPushButton:hover {
+            color: #e8e0d4;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
     """
 
     def setup_ui(self):
@@ -221,29 +240,49 @@ class LavidaApp(QMainWindow):
         self.layout = QVBoxLayout(self.central_widget)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
-        self.central_widget.setStyleSheet("QWidget { font-family: 'Segoe UI', sans-serif; }")
+        self.central_widget.setStyleSheet(
+            "QWidget { font-family: 'Inter', 'Segoe UI', 'SF Pro Display', sans-serif; }"
+        )
 
         self.main_frame = QFrame()
         self.main_frame.setObjectName("MainFrame")
-        self.main_frame.setStyleSheet("""
-            QFrame#MainFrame {
-                background: #2d2926;
-                border-radius: 8px;
-            }
+        self.main_frame.setStyleSheet(f"""
+            QFrame#MainFrame {{
+                background: {self.CLR_SURFACE};
+                border: 1px solid {self.CLR_BORDER};
+                border-radius: 12px;
+            }}
         """)
         self.layout.addWidget(self.main_frame)
 
         self.frame_layout = QVBoxLayout(self.main_frame)
-        self.frame_layout.setContentsMargins(12, 10, 12, 12)
+        self.frame_layout.setContentsMargins(8, 8, 8, 12)
         self.frame_layout.setSpacing(0)
 
+        # -- Top bar --
         top_bar = QHBoxLayout()
-        top_bar.setSpacing(0)
+        top_bar.setSpacing(4)
+        top_bar.setContentsMargins(4, 0, 4, 0)
 
-        add_btn = QPushButton("Add Curr Vid")
+        add_btn = QPushButton("+ Add")
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(self.add_current_video)
-        add_btn.setStyleSheet(self.BTN_STYLE)
+        add_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {self.CLR_ACCENT_SUBTLE};
+                color: {self.CLR_ACCENT};
+                border: 1px solid rgba(201, 100, 66, 0.20);
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 5px 14px;
+            }}
+            QPushButton:hover {{
+                background: rgba(201, 100, 66, 0.22);
+                color: {self.CLR_ACCENT_HOVER};
+                border: 1px solid rgba(201, 100, 66, 0.35);
+            }}
+        """)
         top_bar.addWidget(add_btn)
 
         top_bar.addStretch()
@@ -254,77 +293,112 @@ class LavidaApp(QMainWindow):
         search_btn.setStyleSheet(self.BTN_STYLE)
         top_bar.addWidget(search_btn)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton("Hide")
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.clicked.connect(self.hide)
         close_btn.setStyleSheet(self.BTN_STYLE)
         top_bar.addWidget(close_btn)
 
-        disable_btn = QPushButton("Disable")
+        disable_btn = QPushButton("Quit")
         disable_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         disable_btn.clicked.connect(self.close_application)
-        disable_btn.setStyleSheet(self.BTN_STYLE)
+        disable_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: #8a7f73;
+                border: 1px solid transparent;
+                border-radius: 6px;
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                padding: 5px 12px;
+            }}
+            QPushButton:hover {{
+                color: #e05252;
+                background: rgba(224, 82, 82, 0.10);
+                border: 1px solid rgba(224, 82, 82, 0.15);
+            }}
+        """)
         top_bar.addWidget(disable_btn)
 
         self.frame_layout.addLayout(top_bar)
 
+        # -- Search input --
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("search...")
-        self.search_input.setStyleSheet("""
-            QLineEdit {
-                background: transparent;
-                border: none;
-                border-bottom: 1px solid #3e3832;
-                color: #ece5da;
-                padding: 6px 2px;
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                border-bottom: 1px solid #6b6259;
-            }
+        self.search_input.setPlaceholderText("Search videos...")
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {self.CLR_BASE};
+                border: 1px solid {self.CLR_BORDER};
+                border-radius: 8px;
+                color: {self.CLR_TEXT};
+                padding: 8px 12px;
+                margin: 8px 4px 0px 4px;
+                font-size: 12px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {self.CLR_ACCENT};
+            }}
         """)
         self.search_input.textChanged.connect(self.filter_videos)
         self.search_input.hide()
         self.frame_layout.addWidget(self.search_input)
 
+        # -- Tabs --
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane { border: none; background: transparent; margin-top: 10px; }
-            QTabBar::tab {
-                background: transparent;
-                color: #6b6259;
-                padding: 5px 0px;
-                width: 54px;
-                height: 24px;
-                margin-right: 8px;
-                font-weight: 500;
-                font-size: 12px;
+        self.tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
                 border: none;
-                border-bottom: 1px solid transparent;
-            }
-            QTabBar::tab:selected {
-                color: #ece5da;
-                border-bottom: 1px solid #c96442;
-            }
-            QTabBar::tab:hover { color: #9b9287; }
+                background: transparent;
+                margin-top: 4px;
+            }}
+            QTabBar {{
+                background: transparent;
+            }}
+            QTabBar::tab {{
+                background: transparent;
+                color: {self.CLR_TEXT_MUTED};
+                padding: 6px 4px;
+                min-width: 48px;
+                margin: 4px 2px 0px 2px;
+                font-weight: 600;
+                font-size: 11px;
+                letter-spacing: 0.3px;
+                border: none;
+                border-bottom: 2px solid transparent;
+                border-radius: 0px;
+            }}
+            QTabBar::tab:selected {{
+                color: {self.CLR_TEXT};
+                border-bottom: 2px solid {self.CLR_ACCENT};
+            }}
+            QTabBar::tab:hover:!selected {{
+                color: {self.CLR_TEXT_DIM};
+            }}
         """)
 
         self.tab_lists = []
         for i in range(1, 4):
             lst = DraggableListWidget(self, i)
             self.tab_lists.append(lst)
-            self.tabs.addTab(lst, f"tab {i}")
+            self.tabs.addTab(lst, f"Tab {i}")
 
         self.history_list = DraggableListWidget(self, 99)
         self.tab_lists.append(self.history_list)
-        self.tabs.addTab(self.history_list, "history")
+        self.tabs.addTab(self.history_list, "History")
 
         self.tabs.currentChanged.connect(lambda: self.filter_videos(self.search_input.text()))
         self.frame_layout.addWidget(self.tabs)
 
-        self.empty_lbl = QLabel("drop youtube links here")
+        self.empty_lbl = QLabel("Drop YouTube links here")
         self.empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_lbl.setStyleSheet("color: #6b6259; font-size: 13px; border: none;")
+        self.empty_lbl.setStyleSheet(f"""
+            color: {self.CLR_TEXT_MUTED};
+            font-size: 13px;
+            font-weight: 500;
+            border: none;
+            padding: 32px 0px;
+        """)
         self.frame_layout.addWidget(self.empty_lbl)
         self.empty_lbl.hide()
 
