@@ -6,7 +6,7 @@ Rules for AI agents working on this repository.
 
 ## Project Overview
 
-Lavida is a lightweight, always-on-top desktop widget for managing YouTube video links. Built with PyQt6, it provides a frameless, translucent dark-themed UI where users can save, organize, and track YouTube videos across multiple tabs.
+Lavida is a lightweight, always-on-top desktop widget for managing YouTube video links. Built with PyQt6, it provides a frameless, translucent dark-themed UI where users can save, organize, and track YouTube videos across multiple tabs. Features include thumbnail caching, fullscreen detection, search/filter, and global hotkey support.
 
 ## File Organization
 
@@ -14,28 +14,39 @@ Lavida is a lightweight, always-on-top desktop widget for managing YouTube video
 lavida/
 ├── main.py                    # Entry point; creates QApplication and LavidaApp
 ├── requirements.txt           # Python package dependencies
+├── pyproject.toml             # Project metadata and configuration
 ├── README.md                  # Project documentation with screenshots
-├── run.sh                     # Bash script to activate venv and run app
+├── AGENTS.md                  # AI agent rules and conventions
+├── CONTRIBUTING.md            # Contribution guidelines
+├── CODE_OF_CONDUCT.md         # Community code of conduct
+├── CHANGELOG.md               # Version history
+├── LICENSE                    # MIT license
+├── .editorconfig              # Editor configuration (4-space indent, UTF-8)
+├── .gitignore                 # Git ignore patterns
 ├── img/                       # Screenshots for README
 │   └── *.png
 ├── src/
 │   ├── __init__.py
+│   ├── database.py            # Database helper (stub)
 │   ├── workers.py             # GlobalInputListener - QThread for mouse scroll events
 │   └── ui/
 │       ├── __init__.py
 │       ├── main_window.py     # LavidaApp - main window, DB operations, drag-drop, UI setup
-│       └── widgets.py         # VideoCard, DraggableListWidget, DragHandle components
+│       └── widgets.py         # VideoCard, DraggableListWidget, DragHandle, ThumbnailPreview
+├── thumbnails/                # Cached YouTube thumbnails (gitignored, auto-generated)
+│   └── *.jpg
 └── lavida.db                  # SQLite database (gitignored, auto-generated)
 ```
 
 **Generated/runtime files (DO NOT commit):**
 - `lavida.db` - SQLite database, auto-created on first run
+- `thumbnails/` - Downloaded YouTube thumbnails, auto-created
 - `startup_log.txt` - Runtime log file
 - `run.sh` - Local startup script
 
 ## Tech Stack
 
-- **Python 3** - Programming language
+- **Python 3.10+** - Programming language
 - **PyQt6** - GUI framework (desktop application)
 - **SQLite3** - Persistent storage (built-in, no extra dependency)
 - **requests** - HTTP client for fetching YouTube page titles
@@ -44,19 +55,36 @@ lavida/
 
 ## Key Classes
 
-- **LavidaApp** (`src/ui/main_window.py`): Main application window. Handles database operations, drag-drop, window resizing, tab management, and all core functionality.
-- **VideoCard** (`src/ui/widgets.py`): Individual video item widget displaying title with watched/unwatched state.
+- **LavidaApp** (`src/ui/main_window.py`): Main application window. Handles database operations, drag-drop, window resizing, tab management, fullscreen detection, title fetching, and all core functionality.
+- **VideoCard** (`src/ui/widgets.py`): Individual video item widget displaying title and thumbnail with watched/unwatched state.
 - **DraggableListWidget** (`src/ui/widgets.py`): Tab list widget supporting drag-and-drop reordering of videos.
-- **DragHandle** (`src/ui/widgets.py`): Visual grip handle for dragging videos.
+- **DragHandle** (`src/ui/widgets.py`): Visual grip handle (6-dot pattern) for dragging videos.
+- **ThumbnailPreview** (`src/ui/widgets.py`): Singleton popup that shows an enlarged thumbnail on hover, positioned to the right of the main window.
 - **GlobalInputListener** (`src/workers.py`): QThread that listens for mouse scroll right event to toggle window visibility.
 
 ## Architecture
 
 ### UI Design
 - **Frameless, translucent window** with custom drag/resize handling
-- **Dark theme** with cyan (`#00bcd4`) accent color
+- **Dark warm theme** with rust/terracotta (`#c96442`) accent color
 - **4 tabs**: 3 work tabs + 1 History tab
 - **Always-on-top** window for quick access
+- **Fullscreen detection** auto-hides when other apps go fullscreen
+
+### Semantic Color System
+| Token | Value | Usage |
+|-------|-------|-------|
+| `CLR_BASE` | `#1a1714` | Very dark brown background |
+| `CLR_SURFACE` | `#231f1b` | Slightly lighter surface |
+| `CLR_ELEVATED` | `#2e2921` | Elevated elements |
+| `CLR_BORDER` | `#3a332c` | Default border |
+| `CLR_BORDER_HOVER` | `#524a40` | Hover border |
+| `CLR_TEXT` | `#e8e0d4` | Primary text (warm light) |
+| `CLR_TEXT_DIM` | `#8a7f73` | Secondary text |
+| `CLR_TEXT_MUTED` | `#6b6259` | Tertiary text |
+| `CLR_ACCENT` | `#c96442` | Rust/terracotta primary accent |
+| `CLR_ACCENT_HOVER` | `#db7a58` | Lighter accent on hover |
+| `CLR_ACCENT_SUBTLE` | `rgba(201, 100, 66, 0.12)` | Subtle accent background |
 
 ### User Interactions
 | Action | Effect |
@@ -68,16 +96,21 @@ lavida/
 | Mouse scroll right (global) | Toggle window visibility |
 | Drag window edges/corners | Resize window |
 | Drag title bar area | Move window |
+| "+ Add" button | Grab current browser URL and add video |
+| Search button | Show/hide search input to filter videos |
+| Hide button | Hide window |
+| Quit button | Exit application |
 
 ### Database Schema
 SQLite database (`lavida.db`) stores:
-- **videos**: url, title, watched status, tab assignment, display order, deletion flag
+- **videos**: id, url, title, watched status, tab assignment, display order, deletion flag, thumbnail_path
 - **settings**: window position and size (persisted across sessions)
 
 ### Threading Model
 - **Main thread**: PyQt6 event loop, UI rendering
-- **GlobalInputListener thread**: pynput mouse listener for global hotkey detection
+- **GlobalInputListener thread**: pynput mouse listener for global hotkey detection (0.4s debounce)
 - **Title fetching**: Background thread for HTTP requests (does not block UI)
+- **Fullscreen check**: QTimer polling at 100ms intervals
 
 ## Environment
 
@@ -113,12 +146,15 @@ python main.py
 - All database operations are in `LavidaApp` (centralized)
 - Use `sqlite3` context managers for safe connection handling
 - Database is auto-created on first run if not present
+- Schema migrations handled via `ALTER TABLE` with try/except
 
 ### Styling
 - All widget styling uses PyQt6 `setStyleSheet()` with inline CSS
-- Primary accent color: `#00bcd4` (cyan)
-- Background: semi-transparent dark (`rgba(30, 30, 30, 230)`)
-- Text: white (`#ffffff`)
+- Use semantic color tokens defined as class attributes on `LavidaApp`
+- Primary accent color: `#c96442` (rust/terracotta)
+- Background: warm dark brown (`#1a1714`)
+- Text: warm light (`#e8e0d4`)
+- Font family: Inter, Segoe UI, SF Pro Display (system fallbacks)
 
 ### Widget Creation
 - Custom widgets inherit from appropriate `QWidget` subclass
