@@ -239,6 +239,13 @@ class LavidaApp(QMainWindow):
 
         top_bar = QHBoxLayout()
         top_bar.setSpacing(0)
+
+        add_btn = QPushButton("Add Curr Vid")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(self.add_current_video)
+        add_btn.setStyleSheet(self.BTN_STYLE)
+        top_bar.addWidget(add_btn)
+
         top_bar.addStretch()
 
         search_btn = QPushButton("Search")
@@ -455,22 +462,60 @@ class LavidaApp(QMainWindow):
         elif event.mimeData().hasText(): url = event.mimeData().text()
         
         if "youtube.com" in url or "youtu.be" in url:
-            if self.tabs.currentIndex() == 3: 
-                current_tab_index = 0
-            else:
-                current_tab_index = self.tabs.currentIndex()
-            
-            self.cursor.execute("SELECT MIN(row_order) FROM videos")
-            min_val = self.cursor.fetchone()[0]
-            new_order = (min_val if min_val is not None else 0) - 1
-            
-            self.cursor.execute("INSERT INTO videos (url, title, tab_index, row_order, is_deleted) VALUES (?, ?, ?, ?, 0)", (url, "Loading info...", current_tab_index, new_order))
-            self.conn.commit()
-            last_id = self.cursor.lastrowid
-            
-            self.create_card_item(last_id, "Loading info...", url, 0, self.tab_lists[current_tab_index], insert_top=True)
-            self.check_empty_state()
-            threading.Thread(target=self.fetch_title, args=(url, last_id, current_tab_index), daemon=True).start()
+            self._add_video_url(url)
+
+    def _add_video_url(self, url):
+        if self.tabs.currentIndex() == 3: 
+            current_tab_index = 0
+        else:
+            current_tab_index = self.tabs.currentIndex()
+        
+        self.cursor.execute("SELECT MIN(row_order) FROM videos")
+        min_val = self.cursor.fetchone()[0]
+        new_order = (min_val if min_val is not None else 0) - 1
+        
+        self.cursor.execute("INSERT INTO videos (url, title, tab_index, row_order, is_deleted) VALUES (?, ?, ?, ?, 0)", (url, "Loading info...", current_tab_index, new_order))
+        self.conn.commit()
+        last_id = self.cursor.lastrowid
+        
+        self.create_card_item(last_id, "Loading info...", url, 0, self.tab_lists[current_tab_index], insert_top=True)
+        self.check_empty_state()
+        threading.Thread(target=self.fetch_title, args=(url, last_id, current_tab_index), daemon=True).start()
+
+    def add_current_video(self):
+        self.hide()
+        QTimer.singleShot(150, self._grab_step_focus)
+
+    def _grab_step_focus(self):
+        try:
+            subprocess.run(['xdotool', 'key', 'ctrl+l'], timeout=1)
+        except Exception:
+            self.show()
+            return
+        QTimer.singleShot(150, self._grab_step_copy)
+
+    def _grab_step_copy(self):
+        try:
+            subprocess.run(['xdotool', 'key', 'ctrl+c'], timeout=1)
+        except Exception:
+            self.show()
+            return
+        QTimer.singleShot(150, self._grab_step_read)
+
+    def _grab_step_read(self):
+        try:
+            subprocess.run(['xdotool', 'key', 'Escape'], timeout=1)
+        except Exception:
+            pass
+
+        clipboard = QApplication.clipboard()
+        url = clipboard.text().strip()
+
+        if 'youtube.com' in url or 'youtu.be' in url:
+            self._add_video_url(url)
+
+        self.show()
+        self.activateWindow()
 
     @staticmethod
     def extract_video_id(url):
