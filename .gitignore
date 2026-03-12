@@ -6,6 +6,7 @@ __pycache__/
 venv/
 .venv/
 env/
+main_env/
 
 dist/
 build/
@@ -28,6 +29,7 @@ startup_log.txt
 Thumbs.db
 
 .env
+.claude/
 
 run.sh
 universal-ui-design-methodology.md

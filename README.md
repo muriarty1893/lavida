@@ -1,35 +1,64 @@
 # Lavida
 
-A lightweight, always-on-top desktop widget for managing YouTube video links.
+A lightweight, always-on-top Linux desktop widget for managing YouTube video links. Drop links, organize across tabs, and pick up where you left off.
 
-## Setup
+## Features
+
+- **Drag & drop** YouTube URLs onto the window to save them
+- **3 tabs** for organizing videos + a history tab for deleted items
+- **Auto-fetches** video titles and thumbnails
+- **Always on top** with frameless, resizable window
+- **Global hotkey** (mouse scroll right) to toggle visibility
+- **Persistent storage** via local SQLite database
+- **Auto-hide** when another app goes fullscreen
+- **Search** across all your saved videos
+- **Drag to reorder** within tabs
+
+## Installation
+
+**Requirements:** Python 3.10+, Linux (X11)
 
 ```bash
+git clone https://github.com/muriarty1893/lavida.git
+cd lavida
 pip install -r requirements.txt
+```
+
+## Usage
+
+```bash
 python main.py
 ```
 
-## How it works
+### Controls
 
-Drag and drop a YouTube link onto the window. The title is fetched automatically. Videos are saved in a local SQLite database and persist across sessions.
+| Action | Effect |
+| --- | --- |
+| Drag & drop URL | Add video to current tab |
+| Left click | Open in browser, mark as watched |
+| Right click | Mark as unwatched |
+| Middle click | Delete to history |
+| Mouse scroll right | Toggle window visibility (global) |
 
-The window stays on top of other windows. You can organize videos across 3 tabs and move them between tabs by dragging.
+### Buttons
 
-## Controls
-
-| Drag & drop URL > Add a video to the current tab |
-| Left click a video > Open in browser, mark as watched |
-| Right click a video > Mark as unwatched |
-| Middle click a video > Delete to history |
-| Mouse scroll right > Toggle window visibility (global) |
-
-- **Close** - Hide the window. Bring it back with mouse scroll right.
-- **Disable** - Quit the application completely.
+- **+ Add** - Grab the current browser URL and add it
+- **Search** - Filter videos by title
+- **Hide** - Hide the window (bring back with scroll right)
+- **Quit** - Exit the application
 
 ## Screenshots
 
-![](img/Screenshot%20from%202026-02-23%2010-37-06.png)
+![](img/ss1.png)
 
-![](img/Screenshot%20from%202026-02-23%2010-37-23.png)
+![](img/ss2.png)
 
-![](img/Screenshot%20from%202026-02-23%2010-37-42.png)
+![](img/ss3.png)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
+
+[MIT](LICENSE)

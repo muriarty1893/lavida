@@ -1,0 +1,29 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [Unreleased]
+
+### Changed
+- Redesigned UI with semantic color system, polished buttons, tabs, cards, and search input
+- Updated button labels for clarity ("+ Add", "Hide", "Quit")
+
+## [0.1.0] - 2026-02-23
+
+### Added
+- Initial release
+- Drag-and-drop YouTube link management
+- 3 tabs for organizing videos + history tab
+- Auto-fetch video titles and thumbnails
+- Global hotkey to toggle window visibility (mouse scroll right)
+- Always-on-top frameless window
+- Left click to open and mark as watched
+- Right click to mark as unwatched
+- Middle click to delete
+- Drag-to-reorder within tabs
+- Persistent storage via SQLite
+- Auto-hide when another app goes fullscreen
+- Search/filter across videos
+- "Add current video" button (grabs URL from active browser)
