@@ -31,5 +31,6 @@ Thumbs.db
 .env
 .claude/
 
+/run.sh
 run.sh
 universal-ui-design-methodology.md

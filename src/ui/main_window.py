@@ -460,9 +460,11 @@ class LavidaApp(QMainWindow):
         if insert_top:
             item = QListWidgetItem()
             target_list.insertItem(0, item)
+            row_index = 0
         else:
             item = QListWidgetItem(target_list)
-            
+            row_index = target_list.count() - 1
+
         item.setSizeHint(QSize(0, 48))
         item.setData(Qt.ItemDataRole.UserRole, url)
         item.setData(Qt.ItemDataRole.UserRole + 1, vid_id)
@@ -470,10 +472,17 @@ class LavidaApp(QMainWindow):
         item.setData(Qt.ItemDataRole.UserRole + 3, title)
         item.setData(Qt.ItemDataRole.UserRole + 4, thumbnail_path or "")
         is_history = (target_list == self.history_list)
-        card = VideoCard(vid_id, title, url, watched, self, item, is_history=is_history)
+        card = VideoCard(vid_id, title, url, watched, self, item, is_history=is_history, row_index=row_index)
         if thumbnail_path:
             card.set_thumbnail(thumbnail_path)
         target_list.setItemWidget(item, card)
+
+        # Re-apply alternating styles when inserting at top
+        if insert_top:
+            for i in range(target_list.count()):
+                w = target_list.itemWidget(target_list.item(i))
+                if w:
+                    w.apply_row_style(i)
 
     def mark_as_watched(self, vid_id, card_widget):
         self.cursor.execute("UPDATE videos SET watched = 1 WHERE id = ?", (vid_id,))

@@ -89,7 +89,12 @@ class DragHandle(QWidget):
                 painter.drawEllipse(QRectF(x, y, dot_size, dot_size))
 
 class VideoCard(QFrame):
-    def __init__(self, vid_id, title, url, watched, parent_window, list_item, is_history=False):
+    # Alternating row backgrounds for visual separation
+    ROW_BG_EVEN = "rgba(255, 255, 255, 0.02)"
+    ROW_BG_ODD = "transparent"
+    ROW_HOVER = "rgba(255, 255, 255, 0.06)"
+
+    def __init__(self, vid_id, title, url, watched, parent_window, list_item, is_history=False, row_index=0):
         super().__init__()
         self.vid_id = vid_id
         self.url = url
@@ -104,17 +109,7 @@ class VideoCard(QFrame):
         self._hover_timer.timeout.connect(self._show_preview)
 
         self.setObjectName("VideoCard")
-        self.setStyleSheet(f"""
-            QFrame#VideoCard {{
-                background: transparent;
-                border: none;
-                border-radius: 8px;
-                margin: 0px 4px;
-            }}
-            QFrame#VideoCard:hover {{
-                background: rgba(255, 255, 255, 0.04);
-            }}
-        """)
+        self.apply_row_style(row_index)
 
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(6, 4, 6, 4)
@@ -182,6 +177,20 @@ class VideoCard(QFrame):
         """)
         self.del_btn.clicked.connect(self.delete_clicked)
         self.layout.addWidget(self.del_btn)
+
+    def apply_row_style(self, row_index):
+        bg = self.ROW_BG_EVEN if row_index % 2 == 0 else self.ROW_BG_ODD
+        self.setStyleSheet(f"""
+            QFrame#VideoCard {{
+                background: {bg};
+                border: none;
+                border-radius: 8px;
+                margin: 0px 4px;
+            }}
+            QFrame#VideoCard:hover {{
+                background: {self.ROW_HOVER};
+            }}
+        """)
 
     def set_watched_style(self):
         font = self.title_lbl.font()
@@ -305,11 +314,13 @@ class DraggableListWidget(QListWidget):
                 thumb_path = item.data(Qt.ItemDataRole.UserRole + 4)
                 if title is None: title = "Loading..."
 
-                card = VideoCard(vid_id, title, url, watched, self.parent_window, item)
+                card = VideoCard(vid_id, title, url, watched, self.parent_window, item, row_index=i)
                 if thumb_path:
                     card.set_thumbnail(thumb_path)
                 item.setSizeHint(QSize(0, 48))
                 self.setItemWidget(item, card)
+            else:
+                self.itemWidget(item).apply_row_style(i)
 
         self.update_db_order()
 
