@@ -1,8 +1,51 @@
+import os
 import webbrowser
 from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout, QFrame,
                              QListWidget, QAbstractItemView, QListWidgetItem)
-from PyQt6.QtCore import Qt, QSize, QRectF
-from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush
+from PyQt6.QtCore import Qt, QSize, QRectF, QTimer, QPoint
+from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPixmap
+
+
+class ThumbnailPreview(QLabel):
+    """Floating popup that shows a larger thumbnail on hover."""
+    _instance = None
+
+    @classmethod
+    def instance(cls):
+        if cls._instance is None or not cls._instance.isVisible:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        super().__init__(None)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.ToolTip
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setFixedSize(248, 148)
+        self.setStyleSheet("""
+            QLabel {
+                background: #2d2926;
+                border: 1px solid #3e3832;
+                border-radius: 6px;
+                padding: 4px;
+            }
+        """)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hide()
+
+    def show_at(self, pixmap, global_pos):
+        scaled = pixmap.scaled(
+            480, 280,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        self.setPixmap(scaled)
+        self.setFixedSize(scaled.width() + 8, scaled.height() + 8)
+        self.move(global_pos)
+        self.show()
 
 class DragHandle(QWidget):
     def __init__(self, parent=None):
@@ -42,6 +85,11 @@ class VideoCard(QFrame):
         self.parent_window = parent_window
         self.list_item = list_item
         self.is_history = is_history
+        self._thumb_path = None
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(350)
+        self._hover_timer.timeout.connect(self._show_preview)
 
         self.setObjectName("VideoCard")
         self.setStyleSheet("""
@@ -56,11 +104,17 @@ class VideoCard(QFrame):
         """)
 
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(4, 0, 4, 0)
-        self.layout.setSpacing(4)
+        self.layout.setContentsMargins(4, 2, 4, 2)
+        self.layout.setSpacing(6)
 
         self.drag_handle = DragHandle()
         self.layout.addWidget(self.drag_handle)
+
+        self.thumb_lbl = QLabel()
+        self.thumb_lbl.setFixedSize(48, 36)
+        self.thumb_lbl.setStyleSheet("background: #1e1b18; border-radius: 3px;")
+        self.thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(self.thumb_lbl)
 
         self.title_lbl = QLabel(title)
         self.title_lbl.setStyleSheet("color: #ece5da; font-size: 13px; font-weight: 400;")
@@ -112,11 +166,49 @@ class VideoCard(QFrame):
                 if self.url:
                     webbrowser.open(self.url)
                     self.parent_window.mark_as_watched(self.vid_id, self)
+                    self.parent_window.hide()
         elif event.button() == Qt.MouseButton.RightButton:
             self.parent_window.mark_as_unwatched(self.vid_id, self)
         elif event.button() == Qt.MouseButton.MiddleButton:
             self.delete_clicked()
         super().mousePressEvent(event)
+
+    def set_thumbnail(self, path):
+        if path and os.path.exists(path):
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                self._thumb_path = path
+                self.thumb_lbl.setPixmap(
+                    pixmap.scaled(48, 36, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                  Qt.TransformationMode.SmoothTransformation)
+                )
+                self.thumb_lbl.setStyleSheet("border-radius: 3px;")
+
+    def enterEvent(self, event):
+        if self._thumb_path:
+            self._hover_timer.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover_timer.stop()
+        preview = ThumbnailPreview.instance()
+        preview.hide()
+        super().leaveEvent(event)
+
+    def _show_preview(self):
+        if not self._thumb_path or not os.path.exists(self._thumb_path):
+            return
+        pixmap = QPixmap(self._thumb_path)
+        if pixmap.isNull():
+            return
+        preview = ThumbnailPreview.instance()
+        # Position to the right of the main window
+        main_win = self.parent_window
+        win_rect = main_win.geometry()
+        card_global_y = self.mapToGlobal(QPoint(0, 0)).y()
+        popup_x = win_rect.x() + win_rect.width() + 6
+        popup_y = card_global_y - 40
+        preview.show_at(pixmap, QPoint(popup_x, popup_y))
 
 class DraggableListWidget(QListWidget):
     def __init__(self, parent_window, tab_index):
@@ -147,10 +239,13 @@ class DraggableListWidget(QListWidget):
                 url = item.data(Qt.ItemDataRole.UserRole)
                 watched = item.data(Qt.ItemDataRole.UserRole + 2)
                 title = item.data(Qt.ItemDataRole.UserRole + 3)
+                thumb_path = item.data(Qt.ItemDataRole.UserRole + 4)
                 if title is None: title = "Loading..."
 
                 card = VideoCard(vid_id, title, url, watched, self.parent_window, item)
-                item.setSizeHint(QSize(0, 40))
+                if thumb_path:
+                    card.set_thumbnail(thumb_path)
+                item.setSizeHint(QSize(0, 48))
                 self.setItemWidget(item, card)
 
         self.update_db_order()

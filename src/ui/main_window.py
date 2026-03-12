@@ -1,5 +1,7 @@
 import os
+import re
 import sqlite3
+import subprocess
 import requests
 import threading
 from bs4 import BeautifulSoup
@@ -7,13 +9,13 @@ from bs4 import BeautifulSoup
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QTabWidget,
                              QVBoxLayout, QHBoxLayout, QFrame,
                              QApplication, QListWidgetItem, QLineEdit)
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QTimer
 
 from src.workers import GlobalInputListener
 from src.ui.widgets import VideoCard, DraggableListWidget
 
 class LavidaApp(QMainWindow):
-    update_title_signal = pyqtSignal(str, int, int) 
+    update_title_signal = pyqtSignal(str, str, int, int)
 
     def __init__(self):
         super().__init__()
@@ -48,6 +50,12 @@ class LavidaApp(QMainWindow):
         self.current_edge = None      
         self.is_resizing = False      
         self.old_pos = None           
+
+        self._hidden_by_fullscreen = False
+        self._fullscreen_timer = QTimer(self)
+        self._fullscreen_timer.setInterval(100)
+        self._fullscreen_timer.timeout.connect(self._check_fullscreen)
+        self._fullscreen_timer.start()
 
     def position_left_center(self):
         screen = QApplication.primaryScreen().geometry()
@@ -185,9 +193,14 @@ class LavidaApp(QMainWindow):
         except sqlite3.OperationalError: pass
         try: self.cursor.execute("ALTER TABLE videos ADD COLUMN is_deleted INTEGER DEFAULT 0")
         except sqlite3.OperationalError: pass
+        try: self.cursor.execute("ALTER TABLE videos ADD COLUMN thumbnail_path TEXT DEFAULT ''")
+        except sqlite3.OperationalError: pass
         
         self.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
         self.conn.commit()
+
+        self.thumbnails_dir = os.path.join(os.path.dirname(db_path), "thumbnails")
+        os.makedirs(self.thumbnails_dir, exist_ok=True)
 
     BTN_STYLE = """
         QPushButton {
@@ -351,31 +364,34 @@ class LavidaApp(QMainWindow):
     def load_data(self):
         for lst in self.tab_lists: lst.clear()
         
-        self.cursor.execute("SELECT id, title, url, watched, tab_index FROM videos WHERE is_deleted=0 ORDER BY row_order ASC, id DESC")
-        for vid_id, title, url, watched, tab_index in self.cursor.fetchall():
+        self.cursor.execute("SELECT id, title, url, watched, tab_index, thumbnail_path FROM videos WHERE is_deleted=0 ORDER BY row_order ASC, id DESC")
+        for vid_id, title, url, watched, tab_index, thumb_path in self.cursor.fetchall():
             target_index = tab_index if tab_index < 3 else 0
-            self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_index])
+            self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_index], thumbnail_path=thumb_path)
 
-        self.cursor.execute("SELECT id, title, url, watched FROM videos WHERE is_deleted=1 ORDER BY id DESC")
-        for vid_id, title, url, watched in self.cursor.fetchall():
-            self.create_card_item(vid_id, title, url, watched, self.history_list)
+        self.cursor.execute("SELECT id, title, url, watched, thumbnail_path FROM videos WHERE is_deleted=1 ORDER BY id DESC")
+        for vid_id, title, url, watched, thumb_path in self.cursor.fetchall():
+            self.create_card_item(vid_id, title, url, watched, self.history_list, thumbnail_path=thumb_path)
 
         self.check_empty_state()
 
-    def create_card_item(self, vid_id, title, url, watched, target_list, insert_top=False):
+    def create_card_item(self, vid_id, title, url, watched, target_list, insert_top=False, thumbnail_path=""):
         if insert_top:
             item = QListWidgetItem()
             target_list.insertItem(0, item)
         else:
             item = QListWidgetItem(target_list)
             
-        item.setSizeHint(QSize(0, 40))
+        item.setSizeHint(QSize(0, 48))
         item.setData(Qt.ItemDataRole.UserRole, url)
         item.setData(Qt.ItemDataRole.UserRole + 1, vid_id)
         item.setData(Qt.ItemDataRole.UserRole + 2, watched)
         item.setData(Qt.ItemDataRole.UserRole + 3, title)
+        item.setData(Qt.ItemDataRole.UserRole + 4, thumbnail_path or "")
         is_history = (target_list == self.history_list)
         card = VideoCard(vid_id, title, url, watched, self, item, is_history=is_history)
+        if thumbnail_path:
+            card.set_thumbnail(thumbnail_path)
         target_list.setItemWidget(item, card)
 
     def mark_as_watched(self, vid_id, card_widget):
@@ -406,7 +422,8 @@ class LavidaApp(QMainWindow):
             title = item.data(Qt.ItemDataRole.UserRole + 3)
             url = item.data(Qt.ItemDataRole.UserRole)
             watched = item.data(Qt.ItemDataRole.UserRole + 2)
-            self.create_card_item(vid_id, title, url, watched, self.history_list)
+            thumb_path = item.data(Qt.ItemDataRole.UserRole + 4) or ""
+            self.create_card_item(vid_id, title, url, watched, self.history_list, thumbnail_path=thumb_path)
 
         self.check_empty_state()
 
@@ -424,7 +441,8 @@ class LavidaApp(QMainWindow):
         title = item.data(Qt.ItemDataRole.UserRole + 3)
         url = item.data(Qt.ItemDataRole.UserRole)
         watched = item.data(Qt.ItemDataRole.UserRole + 2)
-        self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_tab], insert_top=True)
+        thumb_path = item.data(Qt.ItemDataRole.UserRole + 4) or ""
+        self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_tab], insert_top=True, thumbnail_path=thumb_path)
         self.check_empty_state()
 
     def dragEnterEvent(self, event):
@@ -454,19 +472,46 @@ class LavidaApp(QMainWindow):
             self.check_empty_state()
             threading.Thread(target=self.fetch_title, args=(url, last_id, current_tab_index), daemon=True).start()
 
+    @staticmethod
+    def extract_video_id(url):
+        patterns = [
+            r'(?:v=|/v/)([a-zA-Z0-9_-]{11})',
+            r'youtu\.be/([a-zA-Z0-9_-]{11})',
+            r'(?:embed|shorts)/([a-zA-Z0-9_-]{11})',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return match.group(1)
+        return None
+
     def fetch_title(self, url, vid_id, tab_index):
+        title = url
+        thumb_path = ""
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(url, headers=headers, timeout=5)
             soup = BeautifulSoup(response.text, 'html.parser')
-            title = url
             if soup.title: title = soup.title.string.replace("- YouTube", "").strip()
-            self.update_title_signal.emit(title, vid_id, tab_index)
         except Exception:
-            self.update_title_signal.emit(url, vid_id, tab_index)
+            pass
 
-    def update_item_title(self, title, vid_id, tab_index):
-        self.cursor.execute("UPDATE videos SET title = ? WHERE id = ?", (title, vid_id))
+        try:
+            video_id = self.extract_video_id(url)
+            if video_id:
+                thumb_url = f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
+                resp = requests.get(thumb_url, timeout=5)
+                if resp.status_code == 200:
+                    thumb_path = os.path.join(self.thumbnails_dir, f"{video_id}.jpg")
+                    with open(thumb_path, 'wb') as f:
+                        f.write(resp.content)
+        except Exception:
+            pass
+
+        self.update_title_signal.emit(title, thumb_path, vid_id, tab_index)
+
+    def update_item_title(self, title, thumb_path, vid_id, tab_index):
+        self.cursor.execute("UPDATE videos SET title = ?, thumbnail_path = ? WHERE id = ?", (title, thumb_path, vid_id))
         self.conn.commit()
         
         target_list = self.tab_lists[tab_index] if tab_index < 3 else self.history_list
@@ -476,12 +521,42 @@ class LavidaApp(QMainWindow):
             widget = target_list.itemWidget(item)
             if widget and widget.vid_id == vid_id:
                 item.setData(Qt.ItemDataRole.UserRole + 3, title)
+                item.setData(Qt.ItemDataRole.UserRole + 4, thumb_path)
                 widget.title_lbl.setText(title)
+                if thumb_path:
+                    widget.set_thumbnail(thumb_path)
                 break
 
     def toggle_visibility(self):
         if self.isHidden():
+            self._hidden_by_fullscreen = False
             self.show()
             self.activateWindow()
         else:
             self.hide()
+
+    def _check_fullscreen(self):
+        try:
+            result = subprocess.run(
+                ['xprop', '-root', '_NET_ACTIVE_WINDOW'],
+                capture_output=True, text=True, timeout=1
+            )
+            parts = result.stdout.strip().split()
+            window_id = parts[-1] if parts else None
+            if not window_id or window_id == '0x0':
+                return
+
+            result = subprocess.run(
+                ['xprop', '-id', window_id, '_NET_WM_STATE'],
+                capture_output=True, text=True, timeout=1
+            )
+            is_fullscreen = '_NET_WM_STATE_FULLSCREEN' in result.stdout
+
+            if is_fullscreen and not self.isHidden():
+                self._hidden_by_fullscreen = True
+                self.hide()
+            elif not is_fullscreen and self._hidden_by_fullscreen:
+                self._hidden_by_fullscreen = False
+                self.show()
+        except Exception:
+            pass

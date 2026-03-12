@@ -19,6 +19,7 @@ build/
 *~
 
 *.db
+thumbnails/ 
 
 *.log
 startup_log.txt
