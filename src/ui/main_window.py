@@ -19,6 +19,62 @@ from src.ui.widgets import VideoCard, DraggableListWidget
 logger = logging.getLogger(__name__)
 
 
+class DropEdge(QWidget):
+    """Thin strip on the left screen edge that detects video drag-and-drop."""
+
+    def __init__(self, parent_window):
+        super().__init__(None)
+        self.parent_window = parent_window
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAcceptDrops(True)
+
+        screen = QApplication.primaryScreen().geometry()
+        self.setGeometry(0, 0, 12, screen.height())
+        # Needs minimal opacity to receive drag events on X11
+        self.setStyleSheet("background: rgba(0, 0, 0, 0.01);")
+        self.show()
+
+    def dragEnterEvent(self, event):
+        mime = event.mimeData()
+        text = ""
+        if mime.hasUrls():
+            text = mime.urls()[0].toString()
+        elif mime.hasText():
+            text = mime.text()
+
+        if "youtube.com" in text or "youtu.be" in text:
+            event.acceptProposedAction()
+            if self.parent_window.isHidden():
+                self.parent_window._hidden_by_fullscreen = False
+                self.parent_window._opened_by_drag = True
+                self.parent_window.show()
+                self.parent_window.activateWindow()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        mime = event.mimeData()
+        url = ""
+        if mime.hasUrls():
+            url = mime.urls()[0].toString()
+        elif mime.hasText():
+            url = mime.text()
+
+        if "youtube.com" in url or "youtu.be" in url:
+            self.parent_window._opened_by_drag = True
+            self.parent_window._add_video_url(url)
+        event.acceptProposedAction()
+
+
 class LavidaApp(QMainWindow):
     update_title_signal = pyqtSignal(str, str, int, int)
 
@@ -65,6 +121,9 @@ class LavidaApp(QMainWindow):
         self._fullscreen_timer.setInterval(500)
         self._fullscreen_timer.timeout.connect(self._check_fullscreen)
         self._fullscreen_timer.start()
+
+        self._drop_edge = DropEdge(self)
+        self._opened_by_drag = False
 
     def position_left_center(self):
         screen = QApplication.primaryScreen().geometry()
@@ -179,7 +238,7 @@ class LavidaApp(QMainWindow):
                 font-size: 11px;
                 font-weight: 600;
                 letter-spacing: 0.3px;
-                padding: 5px 12px;
+                padding: 5px 8px;
             }}
             QPushButton:hover {{
                 color: {theme.CLR_TEXT};
@@ -678,6 +737,7 @@ class LavidaApp(QMainWindow):
             self.tabs.show()
 
     def close_application(self):
+        self._fullscreen_timer.stop()
         self._save_window_position()
         self.db.close()
         QApplication.quit()
@@ -790,6 +850,7 @@ class LavidaApp(QMainWindow):
             url = event.mimeData().text()
 
         if "youtube.com" in url or "youtu.be" in url:
+            self._opened_by_drag = True
             self._add_video_url(url)
 
     def _add_video_url(self, url):
@@ -906,6 +967,14 @@ class LavidaApp(QMainWindow):
                 if thumb_path:
                     widget.set_thumbnail(thumb_path)
                 break
+
+        if self._opened_by_drag:
+            self._opened_by_drag = False
+            QTimer.singleShot(800, self._hide_after_drag)
+
+    def _hide_after_drag(self):
+        if not self._opened_by_drag:
+            self.hide()
 
     # -- Visibility --
 
