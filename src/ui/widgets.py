@@ -1,7 +1,7 @@
 import os
 import webbrowser
 from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout, QFrame,
-                             QListWidget, QAbstractItemView, QListWidgetItem)
+                             QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox)
 from PyQt6.QtCore import Qt, QSize, QRectF, QTimer, QPoint
 from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPixmap
 
@@ -105,6 +105,11 @@ class VideoCard(QFrame):
         self.layout.setContentsMargins(6, 4, 6, 4)
         self.layout.setSpacing(8)
 
+        self.checkbox = QCheckBox()
+        self.checkbox.setStyleSheet("QCheckBox { margin-left: 4px; }")
+        self.checkbox.hide()
+        self.layout.addWidget(self.checkbox)
+
         self.drag_handle = DragHandle()
         self.layout.addWidget(self.drag_handle)
 
@@ -167,6 +172,16 @@ class VideoCard(QFrame):
         """)
         self.del_btn.clicked.connect(self.delete_clicked)
         self.layout.addWidget(self.del_btn)
+
+    def set_select_mode(self, enabled):
+        if enabled:
+            self.checkbox.show()
+        else:
+            self.checkbox.hide()
+            self.checkbox.setChecked(False)
+
+    def is_checked(self):
+        return self.checkbox.isChecked()
 
     def apply_row_style(self, row_index):
         bg = self.ROW_BG_EVEN if row_index % 2 == 0 else self.ROW_BG_ODD

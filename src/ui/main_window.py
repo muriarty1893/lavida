@@ -62,7 +62,7 @@ class LavidaApp(QMainWindow):
 
         self._hidden_by_fullscreen = False
         self._fullscreen_timer = QTimer(self)
-        self._fullscreen_timer.setInterval(100)
+        self._fullscreen_timer.setInterval(500)
         self._fullscreen_timer.timeout.connect(self._check_fullscreen)
         self._fullscreen_timer.start()
 
@@ -218,6 +218,11 @@ class LavidaApp(QMainWindow):
 
         top_bar.addStretch()
 
+        self.select_btn = QPushButton("Select")
+        self.select_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.select_btn.clicked.connect(self.toggle_select_mode)
+        top_bar.addWidget(self.select_btn)
+
         self.search_btn = QPushButton("Search")
         self.search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.search_btn.clicked.connect(self.toggle_search)
@@ -246,6 +251,51 @@ class LavidaApp(QMainWindow):
         self.search_input.textChanged.connect(self.filter_videos)
         self.search_input.hide()
         self.frame_layout.addWidget(self.search_input)
+
+        # -- Filter bar (All / Watched / Unwatched) --
+        self._filter_mode = "all"
+        self.filter_bar = QHBoxLayout()
+        self.filter_bar.setSpacing(4)
+        self.filter_bar.setContentsMargins(4, 4, 4, 0)
+
+        self.filter_all_btn = QPushButton("All")
+        self.filter_watched_btn = QPushButton("Watched")
+        self.filter_unwatched_btn = QPushButton("Unwatched")
+
+        for btn in (self.filter_all_btn, self.filter_watched_btn, self.filter_unwatched_btn):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setCheckable(True)
+            self.filter_bar.addWidget(btn)
+
+        self.filter_all_btn.setChecked(True)
+        self.filter_all_btn.clicked.connect(lambda: self._set_filter_mode("all"))
+        self.filter_watched_btn.clicked.connect(lambda: self._set_filter_mode("watched"))
+        self.filter_unwatched_btn.clicked.connect(lambda: self._set_filter_mode("unwatched"))
+
+        self.frame_layout.addLayout(self.filter_bar)
+
+        # -- Bulk action bar --
+        self._select_mode = False
+        self.bulk_bar = QFrame()
+        self.bulk_bar.setObjectName("BulkBar")
+        bulk_layout = QHBoxLayout(self.bulk_bar)
+        bulk_layout.setContentsMargins(4, 4, 4, 4)
+        bulk_layout.setSpacing(4)
+
+        self.bulk_delete_btn = QPushButton("Delete Selected")
+        self.bulk_watched_btn = QPushButton("Mark Watched")
+        self.bulk_move_btn = QPushButton("Move to Tab...")
+
+        for btn in (self.bulk_delete_btn, self.bulk_watched_btn, self.bulk_move_btn):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            bulk_layout.addWidget(btn)
+
+        self.bulk_delete_btn.clicked.connect(self._bulk_delete)
+        self.bulk_watched_btn.clicked.connect(self._bulk_mark_watched)
+        self.bulk_move_btn.clicked.connect(self._bulk_move)
+
+        self.bulk_bar.hide()
+        self.frame_layout.addWidget(self.bulk_bar)
 
         # -- No results label --
         self.no_results_lbl = QLabel("No results found")
@@ -308,6 +358,7 @@ class LavidaApp(QMainWindow):
 
         btn_style = self._btn_style()
         self.search_btn.setStyleSheet(btn_style)
+        self.select_btn.setStyleSheet(btn_style)
         self.settings_btn.setStyleSheet(btn_style)
         self.hide_btn.setStyleSheet(btn_style)
 
@@ -391,6 +442,57 @@ class LavidaApp(QMainWindow):
             padding: 32px 0px;
         """)
 
+        filter_btn_style = f"""
+            QPushButton {{
+                background: transparent;
+                color: {theme.CLR_TEXT_MUTED};
+                border: 1px solid transparent;
+                border-radius: 4px;
+                font-size: 10px;
+                font-weight: 600;
+                padding: 3px 10px;
+            }}
+            QPushButton:hover {{
+                color: {theme.CLR_TEXT};
+                background: rgba(255, 255, 255, 0.06);
+            }}
+            QPushButton:checked {{
+                color: {theme.CLR_ACCENT};
+                background: {theme.CLR_ACCENT_SUBTLE};
+                border: 1px solid {theme.accent_rgba(0.20)};
+            }}
+        """
+        self.filter_all_btn.setStyleSheet(filter_btn_style)
+        self.filter_watched_btn.setStyleSheet(filter_btn_style)
+        self.filter_unwatched_btn.setStyleSheet(filter_btn_style)
+
+        bulk_btn_style = f"""
+            QPushButton {{
+                background: {theme.CLR_ELEVATED};
+                color: {theme.CLR_TEXT};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 4px;
+                font-size: 10px;
+                font-weight: 600;
+                padding: 4px 10px;
+            }}
+            QPushButton:hover {{
+                background: {theme.CLR_BORDER};
+            }}
+        """
+        self.bulk_delete_btn.setStyleSheet(bulk_btn_style)
+        self.bulk_watched_btn.setStyleSheet(bulk_btn_style)
+        self.bulk_move_btn.setStyleSheet(bulk_btn_style)
+
+        self.bulk_bar.setStyleSheet(f"""
+            QFrame#BulkBar {{
+                background: {theme.CLR_BASE};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 6px;
+                margin: 4px;
+            }}
+        """)
+
     def refresh_styles(self):
         """Refresh all styles and reload data after theme change."""
         self._apply_styles()
@@ -465,6 +567,13 @@ class LavidaApp(QMainWindow):
             self.search_input.show()
             self.search_input.setFocus()
 
+    def _set_filter_mode(self, mode):
+        self._filter_mode = mode
+        self.filter_all_btn.setChecked(mode == "all")
+        self.filter_watched_btn.setChecked(mode == "watched")
+        self.filter_unwatched_btn.setChecked(mode == "unwatched")
+        self.filter_videos(self.search_input.text())
+
     def filter_videos(self, text):
         text = text.lower()
         current_idx = self.tabs.currentIndex()
@@ -475,16 +584,79 @@ class LavidaApp(QMainWindow):
             for i in range(tab_list.count()):
                 item = tab_list.item(i)
                 title = item.data(Qt.ItemDataRole.UserRole + 3) or ""
+                watched = item.data(Qt.ItemDataRole.UserRole + 2)
+
                 hidden = text not in title.lower()
+
+                if not hidden and self._filter_mode == "watched":
+                    hidden = not watched
+                elif not hidden and self._filter_mode == "unwatched":
+                    hidden = bool(watched)
+
                 item.setHidden(hidden)
                 if tab_list == current_list and not hidden:
                     has_visible = True
 
-        # Show "no results" only when searching and current tab has no visible items
-        if text and current_list and not has_visible:
+        if (text or self._filter_mode != "all") and current_list and not has_visible:
             self.no_results_lbl.show()
         else:
             self.no_results_lbl.hide()
+
+    def toggle_select_mode(self):
+        self._select_mode = not self._select_mode
+        self.select_btn.setChecked(self._select_mode)
+
+        if self._select_mode:
+            self.bulk_bar.show()
+        else:
+            self.bulk_bar.hide()
+
+        for tab_list in self.tab_lists:
+            for i in range(tab_list.count()):
+                w = tab_list.itemWidget(tab_list.item(i))
+                if w:
+                    w.set_select_mode(self._select_mode)
+
+    def _get_checked_vid_ids(self):
+        current_idx = self.tabs.currentIndex()
+        current_list = self.tab_lists[current_idx] if current_idx < len(self.tab_lists) else None
+        if not current_list:
+            return []
+        vid_ids = []
+        for i in range(current_list.count()):
+            w = current_list.itemWidget(current_list.item(i))
+            if w and w.is_checked():
+                vid_ids.append(w.vid_id)
+        return vid_ids
+
+    def _bulk_delete(self):
+        vid_ids = self._get_checked_vid_ids()
+        if not vid_ids:
+            return
+        self.db.bulk_soft_delete(vid_ids)
+        self.toggle_select_mode()
+        self.load_data()
+
+    def _bulk_mark_watched(self):
+        vid_ids = self._get_checked_vid_ids()
+        if not vid_ids:
+            return
+        self.db.bulk_mark_watched(vid_ids)
+        self.toggle_select_mode()
+        self.load_data()
+
+    def _bulk_move(self):
+        vid_ids = self._get_checked_vid_ids()
+        if not vid_ids:
+            return
+
+        tab_names = [self.tabs.tabText(i) for i in range(3)]
+        name, ok = QInputDialog.getItem(self, "Move to Tab", "Select tab:", tab_names, 0, False)
+        if ok and name:
+            tab_index = tab_names.index(name)
+            self.db.bulk_move_to_tab(vid_ids, tab_index)
+            self.toggle_select_mode()
+            self.load_data()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape and self.search_input.isVisible():
@@ -507,6 +679,7 @@ class LavidaApp(QMainWindow):
 
     def close_application(self):
         self._save_window_position()
+        self.db.close()
         QApplication.quit()
 
     # -- Video CRUD --
@@ -624,6 +797,11 @@ class LavidaApp(QMainWindow):
             current_tab_index = 0
         else:
             current_tab_index = self.tabs.currentIndex()
+
+        existing_id = self.db.find_video_by_url(url)
+        if existing_id:
+            self.db.hard_delete_video(existing_id)
+            self.load_data()
 
         new_order = self.db.get_min_row_order() - 1
 

@@ -140,6 +140,34 @@ class Database:
         )
         return self.cursor.fetchall()
 
+    def find_video_by_url(self, url):
+        self.cursor.execute(
+            "SELECT id FROM videos WHERE url = ? AND is_deleted = 0", (url,)
+        )
+        row = self.cursor.fetchone()
+        return row[0] if row else None
+
+    def bulk_soft_delete(self, vid_ids):
+        if not vid_ids:
+            return
+        placeholders = ','.join('?' * len(vid_ids))
+        self.cursor.execute(f"UPDATE videos SET is_deleted=1 WHERE id IN ({placeholders})", vid_ids)
+        self.conn.commit()
+
+    def bulk_mark_watched(self, vid_ids):
+        if not vid_ids:
+            return
+        placeholders = ','.join('?' * len(vid_ids))
+        self.cursor.execute(f"UPDATE videos SET watched=1 WHERE id IN ({placeholders})", vid_ids)
+        self.conn.commit()
+
+    def bulk_move_to_tab(self, vid_ids, tab_index):
+        if not vid_ids:
+            return
+        placeholders = ','.join('?' * len(vid_ids))
+        self.cursor.execute(f"UPDATE videos SET tab_index=? WHERE id IN ({placeholders})", [tab_index] + vid_ids)
+        self.conn.commit()
+
     def get_min_row_order(self):
         self.cursor.execute("SELECT MIN(row_order) FROM videos")
         val = self.cursor.fetchone()[0]
