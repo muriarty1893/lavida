@@ -874,42 +874,50 @@ class LavidaApp(QMainWindow):
 
     # -- Add from browser --
 
+    def _find_browser_window(self):
+        """Find the most recently active browser window."""
+        browsers = ['firefox', 'chrome', 'chromium', 'brave']
+        for browser in browsers:
+            try:
+                result = subprocess.run(
+                    ['xdotool', 'search', '--class', browser],
+                    capture_output=True, text=True, timeout=1
+                )
+                wins = result.stdout.strip().split('\n')
+                for win_id in wins:
+                    if not win_id:
+                        continue
+                    name = subprocess.run(
+                        ['xdotool', 'getwindowname', win_id],
+                        capture_output=True, text=True, timeout=1
+                    ).stdout.strip()
+                    if name and name != browser:
+                        return win_id
+            except Exception:
+                continue
+        return None
+
     def add_current_video(self):
-        self.hide()
-        QTimer.singleShot(150, self._grab_step_focus)
+        win_id = self._find_browser_window()
+        if not win_id:
+            logger.warning("No browser window found")
+            return
 
-    def _grab_step_focus(self):
         try:
+            subprocess.run(['xdotool', 'windowactivate', '--sync', win_id], timeout=2)
             subprocess.run(['xdotool', 'key', 'ctrl+l'], timeout=1)
-        except Exception:
-            logger.warning("xdotool focus step failed", exc_info=True)
-            self.show()
-            return
-        QTimer.singleShot(150, self._grab_step_copy)
-
-    def _grab_step_copy(self):
-        try:
             subprocess.run(['xdotool', 'key', 'ctrl+c'], timeout=1)
-        except Exception:
-            logger.warning("xdotool copy step failed", exc_info=True)
-            self.show()
-            return
-        QTimer.singleShot(150, self._grab_step_read)
-
-    def _grab_step_read(self):
-        try:
             subprocess.run(['xdotool', 'key', 'Escape'], timeout=1)
         except Exception:
-            logger.debug("xdotool escape step failed", exc_info=True)
+            logger.warning("xdotool grab failed", exc_info=True)
+            return
 
-        clipboard = QApplication.clipboard()
-        url = clipboard.text().strip()
+        QApplication.processEvents()
+        url = QApplication.clipboard().text().strip()
 
         if 'youtube.com' in url or 'youtu.be' in url:
             self._add_video_url(url)
-
-        self.show()
-        self.activateWindow()
+            self.activateWindow()
 
     # -- Title / thumbnail fetching --
 
