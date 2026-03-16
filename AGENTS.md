@@ -59,12 +59,12 @@ lavida/
 
 - **Database** (`src/database.py`): Centralized database operations - video CRUD, settings persistence, schema migrations.
 - **LavidaApp** (`src/ui/main_window.py`): Main application window. Handles drag-drop, window resizing, tab management, fullscreen detection, title fetching, and all core UI.
-- **SettingsDialog** (`src/ui/settings_dialog.py`): Settings panel with theme selection, startup options, and shortcut reference.
+- **SettingsDialog** (`src/ui/settings_dialog.py`): Settings panel with theme selection, startup options, activation key rebinding, and shortcut reference.
 - **VideoCard** (`src/ui/widgets.py`): Individual video item widget displaying title and thumbnail with watched/unwatched state.
 - **DraggableListWidget** (`src/ui/widgets.py`): Tab list widget supporting drag-and-drop reordering of videos.
 - **DragHandle** (`src/ui/widgets.py`): Visual grip handle (6-dot pattern) for dragging videos.
 - **ThumbnailPreview** (`src/ui/widgets.py`): Singleton popup that shows an enlarged thumbnail on hover, positioned to the right of the main window.
-- **GlobalInputListener** (`src/workers.py`): QThread that listens for mouse scroll right event to toggle window visibility.
+- **GlobalInputListener** (`src/workers.py`): QThread that listens for a configurable activation key (mouse button, scroll direction, or keyboard key) to toggle window visibility. Supports a detection mode for rebinding from the settings dialog.
 
 ## Architecture
 
@@ -102,7 +102,7 @@ Base colors are constant; accent colors change with the selected theme.
 | Right-click video | Mark unwatched |
 | Middle-click (scroll click) video | Delete to history |
 | Drag handle | Reorder videos within tab |
-| Mouse scroll right (global) | Toggle window visibility |
+| Activation key (global, configurable) | Toggle window visibility |
 | Drag window edges/corners | Resize window |
 | Drag title bar area | Move window |
 | "+ Add" button | Grab current browser URL and add video |

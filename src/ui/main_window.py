@@ -107,7 +107,8 @@ class LavidaApp(QMainWindow):
 
         self.update_title_signal.connect(self.update_item_title)
 
-        self.listener = GlobalInputListener()
+        activation_key = self.db.load_setting('activation_key', 'scroll_right')
+        self.listener = GlobalInputListener(activation_key)
         self.listener.toggle_signal.connect(self.toggle_visibility)
         self.listener.start()
 

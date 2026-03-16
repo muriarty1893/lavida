@@ -27,7 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Drag-and-drop YouTube link management
 - 3 tabs for organizing videos + history tab
 - Auto-fetch video titles and thumbnails
-- Global hotkey to toggle window visibility (mouse scroll right)
+- Configurable activation key to toggle window visibility (set on first launch, changeable in settings)
 - Always-on-top frameless window
 - Left click to open and mark as watched
 - Right click to mark as unwatched

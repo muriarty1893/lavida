@@ -1,9 +1,10 @@
 """Settings dialog for Lavida."""
 
 import src.theme as theme
+from src.workers import activation_key_label
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QPushButton, QCheckBox, QFrame)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 
 
 class SettingsDialog(QDialog):
@@ -12,9 +13,10 @@ class SettingsDialog(QDialog):
         self.db = db
         self.parent_window = parent
         self.current_theme = db.load_setting('theme', theme.DEFAULT_THEME)
+        self._detecting = False
 
         self.setWindowTitle("Settings")
-        self.setFixedSize(300, 440)
+        self.setFixedSize(300, 470)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._apply_dialog_style()
@@ -101,16 +103,48 @@ class SettingsDialog(QDialog):
         self.start_visible_cb.toggled.connect(self._on_start_visible_changed)
         layout.addWidget(self.start_visible_cb)
 
+        # Activation key
+        activation_layout = QHBoxLayout()
+        activation_layout.setContentsMargins(0, 4, 0, 4)
+        activation_lbl = QLabel("Activation key")
+        activation_lbl.setStyleSheet(f"color: {theme.CLR_TEXT}; font-size: 12px;")
+
+        current_key = self.db.load_setting('activation_key', 'scroll_right')
+        self.activation_btn = QPushButton(activation_key_label(current_key))
+        self.activation_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.activation_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme.CLR_ELEVATED};
+                color: {theme.CLR_TEXT};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: 600;
+                min-width: 120px;
+            }}
+            QPushButton:hover {{
+                border-color: {theme.CLR_BORDER_HOVER};
+            }}
+        """)
+        self.activation_btn.clicked.connect(self._on_activation_btn_clicked)
+
+        activation_layout.addWidget(activation_lbl)
+        activation_layout.addStretch()
+        activation_layout.addWidget(self.activation_btn)
+        layout.addLayout(activation_layout)
+
         layout.addWidget(self._separator())
 
         # -- Shortcuts --
         layout.addWidget(self._section_label("SHORTCUTS"))
 
+        self._toggle_key_lbl = None
         shortcuts = [
             ("Left click", "Open video"),
             ("Right click", "Mark unwatched"),
             ("Middle click", "Delete to history"),
-            ("Scroll right", "Toggle window"),
+            (activation_key_label(current_key), "Toggle window"),
             ("Double-click tab", "Rename tab"),
             ("Escape", "Close search"),
         ]
@@ -127,6 +161,8 @@ class SettingsDialog(QDialog):
                 border-radius: 4px;
                 padding: 3px 8px;
             """)
+            if action == "Toggle window":
+                self._toggle_key_lbl = key_lbl
 
             action_lbl = QLabel(action)
             action_lbl.setStyleSheet(f"""
@@ -188,3 +224,77 @@ class SettingsDialog(QDialog):
 
     def _on_start_visible_changed(self, checked):
         self.db.save_setting('start_visible', '1' if checked else '0')
+
+    def _on_activation_btn_clicked(self):
+        if self._detecting:
+            return
+        self._detecting = True
+        self.activation_btn.setText("Press any key...")
+        self.activation_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme.CLR_ACCENT};
+                color: {theme.CLR_TEXT};
+                border: 1px solid {theme.CLR_ACCENT};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: 600;
+                min-width: 120px;
+            }}
+        """)
+
+        listener = self.parent_window.listener
+        listener.detected_signal.connect(self._on_key_detected)
+        # Small delay so the button click itself isn't captured
+        QTimer.singleShot(300, self._start_detecting)
+
+    def _start_detecting(self):
+        self.parent_window.listener.detecting = True
+        # Timeout: reset after 5s if nothing detected
+        self._detect_timer = QTimer()
+        self._detect_timer.setSingleShot(True)
+        self._detect_timer.timeout.connect(self._on_detect_timeout)
+        self._detect_timer.start(5000)
+
+    def _on_key_detected(self, key):
+        self._detect_timer.stop()
+        self.parent_window.listener.detected_signal.disconnect(self._on_key_detected)
+        self._detecting = False
+
+        self.db.save_setting('activation_key', key)
+        self.parent_window.listener.activation_key = key
+
+        label = activation_key_label(key)
+        self.activation_btn.setText(label)
+        self._reset_activation_btn_style()
+        if self._toggle_key_lbl:
+            self._toggle_key_lbl.setText(label)
+
+    def _on_detect_timeout(self):
+        self.parent_window.listener.detecting = False
+        try:
+            self.parent_window.listener.detected_signal.disconnect(self._on_key_detected)
+        except TypeError:
+            pass
+        self._detecting = False
+
+        label = activation_key_label(self.db.load_setting('activation_key', 'scroll_right'))
+        self.activation_btn.setText(label)
+        self._reset_activation_btn_style()
+
+    def _reset_activation_btn_style(self):
+        self.activation_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme.CLR_ELEVATED};
+                color: {theme.CLR_TEXT};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: 600;
+                min-width: 120px;
+            }}
+            QPushButton:hover {{
+                border-color: {theme.CLR_BORDER_HOVER};
+            }}
+        """)
