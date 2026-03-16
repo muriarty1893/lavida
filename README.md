@@ -5,15 +5,8 @@ A lightweight, always-on-top Linux desktop widget for managing YouTube video lin
 ## Features
 
 - **Drag & drop** YouTube URLs onto the window to save them
-- **Customizable tabs** for organizing videos + a history tab for deleted items
-- **Auto-fetches** video titles and thumbnails
-- **Always on top** with frameless, resizable window
-- **Configurable activation key** to toggle visibility (any mouse button, scroll direction, or keyboard key)
-- **Persistent storage** via local SQLite database
+- **(Toggleable) Always on top** with frameless, resizable window
 - **Auto-hide** when another app goes fullscreen
-- **Search** across all your saved videos
-- **Drag to reorder** within tabs
-- **Theme support** with 5 accent color presets
 - **Settings panel** for theme, startup, activation key, and shortcut reference
 
 ## Usage
