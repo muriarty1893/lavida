@@ -123,18 +123,28 @@ class ThumbnailPreview(QLabel):
 class DragHandle(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(10, 20)
+        self.setFixedSize(8, 20)
         self.setCursor(Qt.CursorShape.SizeAllCursor)
 
     def paintEvent(self, event):
+        card = self.parent()
+        if hasattr(card, '_card_hovered') and not card._card_hovered:
+            return
+        if hasattr(card, 'checkbox') and card.checkbox.isVisible():
+            return
+        if hasattr(card, 'is_history') and card.is_history:
+            return
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QBrush(QColor(138, 127, 115, 70)))
+        color = QColor(theme.CLR_TEXT_MUTED)
+        color.setAlpha(100)
+        painter.setBrush(QBrush(color))
         painter.setPen(Qt.PenStyle.NoPen)
 
         dot_size = 2.0
-        gap = 4.0
-        rows = 3
+        gap = 3.5
+        rows = 4
         cols = 2
 
         content_width = cols * dot_size + (cols - 1) * gap
@@ -150,11 +160,6 @@ class DragHandle(QWidget):
                 painter.drawEllipse(QRectF(x, y, dot_size, dot_size))
 
 class VideoCard(QFrame):
-    # Alternating row backgrounds for visual separation
-    ROW_BG_EVEN = "rgba(255, 255, 255, 0.02)"
-    ROW_BG_ODD = "transparent"
-    ROW_HOVER = "rgba(255, 255, 255, 0.06)"
-
     def __init__(self, vid_id, title, url, watched, parent_window, list_item, is_history=False, row_index=0):
         super().__init__()
         self.vid_id = vid_id
@@ -168,6 +173,7 @@ class VideoCard(QFrame):
         self._hover_timer.setSingleShot(True)
         self._hover_timer.setInterval(350)
         self._hover_timer.timeout.connect(self._show_preview)
+        self._card_hovered = False
 
         self.setObjectName("VideoCard")
         self.apply_row_style(row_index)
@@ -185,10 +191,10 @@ class VideoCard(QFrame):
         self.layout.addWidget(self.drag_handle)
 
         self.thumb_lbl = QLabel()
-        self.thumb_lbl.setFixedSize(48, 36)
+        self.thumb_lbl.setFixedSize(64, 36)
         self.thumb_lbl.setStyleSheet(f"""
             background: {theme.CLR_BASE};
-            border-radius: 4px;
+            border-radius: 6px;
         """)
         self.thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(self.thumb_lbl)
@@ -196,7 +202,7 @@ class VideoCard(QFrame):
         self.title_lbl = QLabel(title)
         self.title_lbl.setStyleSheet(f"""
             color: {theme.CLR_TEXT};
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 500;
         """)
         if watched: self.set_watched_style()
@@ -217,30 +223,17 @@ class VideoCard(QFrame):
                 }}
                 QPushButton:hover {{
                     color: {theme.CLR_ACCENT};
-                    background: rgba(201, 100, 66, 0.10);
-                    border: 1px solid rgba(201, 100, 66, 0.15);
+                    background: {theme.accent_rgba(0.10)};
+                    border: 1px solid {theme.accent_rgba(0.15)};
                 }}
             """)
             self.restore_btn.clicked.connect(self.restore_clicked)
             self.layout.addWidget(self.restore_btn)
 
         self.del_btn = QPushButton("\u00d7")
-        self.del_btn.setFixedSize(20, 20)
+        self.del_btn.setFixedSize(24, 24)
         self.del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.del_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                color: {theme.CLR_TEXT_MUTED};
-                border: none;
-                border-radius: 4px;
-                font-size: 14px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                color: #e05252;
-                background: rgba(224, 82, 82, 0.12);
-            }}
-        """)
+        self.del_btn.setStyleSheet(self._del_btn_hidden_style())
         self.del_btn.clicked.connect(self.delete_clicked)
         self.layout.addWidget(self.del_btn)
 
@@ -254,17 +247,46 @@ class VideoCard(QFrame):
     def is_checked(self):
         return self.checkbox.isChecked()
 
+    def _del_btn_hidden_style(self):
+        return f"""
+            QPushButton {{
+                background: transparent;
+                color: transparent;
+                border: none;
+                border-radius: 6px;
+                font-size: 16px;
+                font-weight: 500;
+            }}
+        """
+
+    def _del_btn_visible_style(self):
+        return f"""
+            QPushButton {{
+                background: transparent;
+                color: {theme.CLR_TEXT_MUTED};
+                border: none;
+                border-radius: 6px;
+                font-size: 16px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                color: #e05252;
+                background: rgba(224, 82, 82, 0.12);
+            }}
+        """
+
     def apply_row_style(self, row_index):
-        bg = self.ROW_BG_EVEN if row_index % 2 == 0 else self.ROW_BG_ODD
+        bg = theme.CLR_CARD_BG if row_index % 2 == 0 else theme.CLR_CARD_BG_ALT
         self.setStyleSheet(f"""
             QFrame#VideoCard {{
                 background: {bg};
-                border: none;
-                border-radius: 8px;
-                margin: 0px 4px;
+                border: 1px solid rgba(255,255,255,0.04);
+                border-radius: 10px;
+                margin: 0px 2px;
             }}
             QFrame#VideoCard:hover {{
-                background: {self.ROW_HOVER};
+                background: {theme.CLR_CARD_HOVER};
+                border: 1px solid rgba(255,255,255,0.07);
             }}
         """)
 
@@ -274,7 +296,7 @@ class VideoCard(QFrame):
         self.title_lbl.setFont(font)
         self.title_lbl.setStyleSheet(f"""
             color: {theme.CLR_TEXT_MUTED};
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 500;
         """)
 
@@ -284,7 +306,7 @@ class VideoCard(QFrame):
         self.title_lbl.setFont(font)
         self.title_lbl.setStyleSheet(f"""
             color: {theme.CLR_TEXT};
-            font-size: 12px;
+            font-size: 13px;
             font-weight: 500;
         """)
 
@@ -314,20 +336,25 @@ class VideoCard(QFrame):
             if not pixmap.isNull():
                 self._thumb_path = path
                 self.thumb_lbl.setPixmap(
-                    pixmap.scaled(48, 36, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    pixmap.scaled(64, 36, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                   Qt.TransformationMode.SmoothTransformation)
                 )
-                self.thumb_lbl.setStyleSheet("border-radius: 4px;")
+                self.thumb_lbl.setStyleSheet("border-radius: 6px;")
 
     def enterEvent(self, event):
+        self._card_hovered = True
+        self.drag_handle.update()
+        self.del_btn.setStyleSheet(self._del_btn_visible_style())
         if self._thumb_path:
             self._hover_timer.start()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        self._card_hovered = False
+        self.drag_handle.update()
+        self.del_btn.setStyleSheet(self._del_btn_hidden_style())
         self._hover_timer.stop()
-        preview = ThumbnailPreview.instance()
-        preview.hide()
+        ThumbnailPreview.instance().hide()
         super().leaveEvent(event)
 
     def _show_preview(self):
@@ -356,7 +383,7 @@ class DraggableListWidget(QListWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
 
-        self.setSpacing(2)
+        self.setSpacing(3)
         self.setStyleSheet(f"""
             QListWidget {{
                 background: transparent;
@@ -366,7 +393,7 @@ class DraggableListWidget(QListWidget):
             QListWidget::item {{
                 background: transparent;
                 border: none;
-                border-radius: 8px;
+                border-radius: 10px;
                 padding: 0px;
             }}
             QListWidget::item:hover {{
@@ -375,8 +402,30 @@ class DraggableListWidget(QListWidget):
             QListWidget::item:selected {{
                 background: transparent;
             }}
+            QScrollBar:vertical {{
+                width: 6px;
+                background: transparent;
+                border: none;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: rgba(255,255,255,0.10);
+                border-radius: 3px;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: rgba(255,255,255,0.18);
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background: transparent;
+            }}
         """)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
     def dropEvent(self, event):
         super().dropEvent(event)
@@ -393,7 +442,7 @@ class DraggableListWidget(QListWidget):
                 card = VideoCard(vid_id, title, url, watched, self.parent_window, item, row_index=i)
                 if thumb_path:
                     card.set_thumbnail(thumb_path)
-                item.setSizeHint(QSize(0, 48))
+                item.setSizeHint(QSize(0, 46))
                 self.setItemWidget(item, card)
             else:
                 self.itemWidget(item).apply_row_style(i)

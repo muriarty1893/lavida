@@ -31,13 +31,12 @@ class DropEdge(QWidget):
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAcceptDrops(True)
 
         screen = QApplication.primaryScreen().geometry()
         self.setGeometry(0, 0, 12, screen.height())
-        # Needs minimal opacity to receive drag events on X11
-        self.setStyleSheet("background: rgba(0, 0, 0, 0.01);")
+        self.setStyleSheet("background: black;")
+        self.setWindowOpacity(0.01)
         self.show()
 
     def dragEnterEvent(self, event):
@@ -70,7 +69,6 @@ class DropEdge(QWidget):
             url = mime.text()
 
         if "youtube.com" in url or "youtu.be" in url:
-            self.parent_window._opened_by_drag = True
             self.parent_window._add_video_url(url)
         event.acceptProposedAction()
 
@@ -262,7 +260,7 @@ class LavidaApp(QMainWindow):
         self.main_frame = QFrame()
         self.main_frame.setObjectName("MainFrame")
         self.frame_layout = QVBoxLayout(self.main_frame)
-        self.frame_layout.setContentsMargins(8, 8, 8, 12)
+        self.frame_layout.setContentsMargins(8, 10, 8, 12)
         self.frame_layout.setSpacing(0)
         self.main_layout.addWidget(self.main_frame)
 
@@ -316,7 +314,7 @@ class LavidaApp(QMainWindow):
         self._filter_mode = "all"
         self.filter_bar = QHBoxLayout()
         self.filter_bar.setSpacing(4)
-        self.filter_bar.setContentsMargins(4, 4, 4, 0)
+        self.filter_bar.setContentsMargins(4, 6, 4, 2)
 
         self.filter_all_btn = QPushButton("All")
         self.filter_watched_btn = QPushButton("Watched")
@@ -447,7 +445,7 @@ class LavidaApp(QMainWindow):
                 border-radius: 8px;
                 color: {theme.CLR_TEXT};
                 padding: 8px 12px;
-                margin: 8px 4px 0px 4px;
+                margin: 8px 4px 4px 4px;
                 font-size: 12px;
             }}
             QLineEdit:focus {{
@@ -467,7 +465,7 @@ class LavidaApp(QMainWindow):
             QTabWidget::pane {{
                 border: none;
                 background: transparent;
-                margin-top: 4px;
+                margin-top: 2px;
             }}
             QTabBar {{
                 background: transparent;
@@ -475,9 +473,9 @@ class LavidaApp(QMainWindow):
             QTabBar::tab {{
                 background: transparent;
                 color: {theme.CLR_TEXT_MUTED};
-                padding: 6px 4px;
+                padding: 7px 6px;
                 min-width: 48px;
-                margin: 4px 2px 0px 2px;
+                margin: 6px 3px 0px 3px;
                 font-weight: 600;
                 font-size: 11px;
                 letter-spacing: 0.3px;
@@ -488,9 +486,11 @@ class LavidaApp(QMainWindow):
             QTabBar::tab:selected {{
                 color: {theme.CLR_TEXT};
                 border-bottom: 2px solid {theme.CLR_ACCENT};
+                background: {theme.accent_rgba(0.06)};
             }}
             QTabBar::tab:hover:!selected {{
                 color: {theme.CLR_TEXT_DIM};
+                background: rgba(255,255,255,0.03);
             }}
         """)
 
@@ -770,7 +770,7 @@ class LavidaApp(QMainWindow):
             item = QListWidgetItem(target_list)
             row_index = target_list.count() - 1
 
-        item.setSizeHint(QSize(0, 48))
+        item.setSizeHint(QSize(0, 46))
         item.setData(Qt.ItemDataRole.UserRole, url)
         item.setData(Qt.ItemDataRole.UserRole + 1, vid_id)
         item.setData(Qt.ItemDataRole.UserRole + 2, watched)
@@ -851,7 +851,6 @@ class LavidaApp(QMainWindow):
             url = event.mimeData().text()
 
         if "youtube.com" in url or "youtu.be" in url:
-            self._opened_by_drag = True
             self._add_video_url(url)
 
     def _add_video_url(self, url):
@@ -978,11 +977,11 @@ class LavidaApp(QMainWindow):
                 break
 
         if self._opened_by_drag:
-            self._opened_by_drag = False
             QTimer.singleShot(800, self._hide_after_drag)
 
     def _hide_after_drag(self):
-        if not self._opened_by_drag:
+        if self._opened_by_drag:
+            self._opened_by_drag = False
             self.hide()
 
     # -- Visibility --

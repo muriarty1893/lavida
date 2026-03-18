@@ -15,6 +15,10 @@ CLR_ACCENT_HOVER = "#db7a58"
 CLR_ACCENT_SUBTLE = "rgba(201, 100, 66, 0.12)"
 _ACCENT_RGB = "201, 100, 66"
 
+CLR_CARD_BG = "rgba(255, 255, 255, 0.035)"
+CLR_CARD_BG_ALT = "rgba(255, 255, 255, 0.055)"
+CLR_CARD_HOVER = "rgba(255, 255, 255, 0.07)"
+
 THEMES = {
     "rust": {
         "label": "Rust",

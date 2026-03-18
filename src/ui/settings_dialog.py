@@ -16,7 +16,7 @@ class SettingsDialog(QDialog):
         self._detecting = False
 
         self.setWindowTitle("Settings")
-        self.setFixedSize(300, 470)
+        self.setFixedSize(300, 490)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._apply_dialog_style()
@@ -58,7 +58,7 @@ class SettingsDialog(QDialog):
             font-weight: 700;
             letter-spacing: 1px;
             padding: 0px;
-            margin-top: 8px;
+            margin-top: 10px;
         """)
         return lbl
 
@@ -71,7 +71,7 @@ class SettingsDialog(QDialog):
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
 
         # -- Appearance --
         layout.addWidget(self._section_label("APPEARANCE"))
