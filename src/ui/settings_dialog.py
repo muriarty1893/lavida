@@ -1,9 +1,12 @@
 """Settings dialog for Lavida."""
 
+import os
+
 import src.theme as theme
 from src.workers import activation_key_label
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QCheckBox, QFrame)
+                             QPushButton, QCheckBox, QFrame, QLineEdit,
+                             QFileDialog)
 from PyQt6.QtCore import Qt, QTimer
 
 
@@ -16,7 +19,7 @@ class SettingsDialog(QDialog):
         self._detecting = False
 
         self.setWindowTitle("Settings")
-        self.setFixedSize(300, 490)
+        self.setFixedSize(300, 550)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
         self._apply_dialog_style()
@@ -136,6 +139,58 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(self._separator())
 
+        # -- Obsidian Vault --
+        layout.addWidget(self._section_label("OBSIDIAN VAULT"))
+
+        vault_row = QHBoxLayout()
+        vault_row.setContentsMargins(0, 4, 0, 4)
+        vault_row.setSpacing(6)
+
+        vault_lbl = QLabel("Vault path")
+        vault_lbl.setStyleSheet(f"color: {theme.CLR_TEXT}; font-size: 12px;")
+
+        self.vault_input = QLineEdit()
+        self.vault_input.setPlaceholderText("Not configured")
+        self.vault_input.setReadOnly(True)
+        vault_path = self.db.load_setting('obsidian_vault_path', '')
+        if vault_path:
+            self.vault_input.setText(vault_path)
+        self.vault_input.setStyleSheet(f"""
+            QLineEdit {{
+                background: {theme.CLR_BASE};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 4px;
+                color: {theme.CLR_TEXT};
+                padding: 3px 6px;
+                font-size: 11px;
+            }}
+        """)
+
+        browse_btn = QPushButton("Browse")
+        browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        browse_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme.CLR_ELEVATED};
+                color: {theme.CLR_TEXT};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                border-color: {theme.CLR_BORDER_HOVER};
+            }}
+        """)
+        browse_btn.clicked.connect(self._browse_vault)
+
+        vault_row.addWidget(vault_lbl)
+        vault_row.addWidget(self.vault_input, 1)
+        vault_row.addWidget(browse_btn)
+        layout.addLayout(vault_row)
+
+        layout.addWidget(self._separator())
+
         # -- Shortcuts --
         layout.addWidget(self._section_label("SHORTCUTS"))
 
@@ -197,6 +252,14 @@ class SettingsDialog(QDialog):
         """)
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
+
+    def _browse_vault(self):
+        start = self.vault_input.text() or os.path.expanduser("~")
+        path = QFileDialog.getExistingDirectory(self, "Select Obsidian Vault", start)
+        if path:
+            self.vault_input.setText(path)
+            self.db.save_setting('obsidian_vault_path', path)
+            self.parent_window.configure_obsidian_export(path)
 
     def _update_theme_buttons(self):
         for name, btn in self._theme_buttons.items():

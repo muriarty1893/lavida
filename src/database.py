@@ -4,11 +4,16 @@ import os
 import sqlite3
 import logging
 
+from PyQt6.QtCore import QObject, pyqtSignal
+
 logger = logging.getLogger(__name__)
 
 
-class Database:
+class Database(QObject):
+    data_changed = pyqtSignal()
+
     def __init__(self, db_path=None):
+        super().__init__()
         if db_path is None:
             db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lavida.db")
         self.db_path = os.path.abspath(db_path)
@@ -90,36 +95,44 @@ class Database:
             (url, title, tab_index, row_order)
         )
         self.conn.commit()
+        self.data_changed.emit()
         return self.cursor.lastrowid
 
     def update_video_title(self, vid_id, title, thumbnail_path=""):
         self.cursor.execute("UPDATE videos SET title = ?, thumbnail_path = ? WHERE id = ?",
                             (title, thumbnail_path, vid_id))
         self.conn.commit()
+        self.data_changed.emit()
 
     def update_video_order(self, vid_id, order):
         self.cursor.execute("UPDATE videos SET row_order = ? WHERE id = ?", (order, vid_id))
         self.conn.commit()
+        self.data_changed.emit()
 
     def mark_watched(self, vid_id):
         self.cursor.execute("UPDATE videos SET watched = 1 WHERE id = ?", (vid_id,))
         self.conn.commit()
+        self.data_changed.emit()
 
     def mark_unwatched(self, vid_id):
         self.cursor.execute("UPDATE videos SET watched = 0 WHERE id = ?", (vid_id,))
         self.conn.commit()
+        self.data_changed.emit()
 
     def soft_delete_video(self, vid_id):
         self.cursor.execute("UPDATE videos SET is_deleted=1 WHERE id = ?", (vid_id,))
         self.conn.commit()
+        self.data_changed.emit()
 
     def hard_delete_video(self, vid_id):
         self.cursor.execute("DELETE FROM videos WHERE id = ?", (vid_id,))
         self.conn.commit()
+        self.data_changed.emit()
 
     def restore_video(self, vid_id):
         self.cursor.execute("UPDATE videos SET is_deleted=0 WHERE id = ?", (vid_id,))
         self.conn.commit()
+        self.data_changed.emit()
 
     def get_video_tab(self, vid_id):
         self.cursor.execute("SELECT tab_index FROM videos WHERE id = ?", (vid_id,))
@@ -147,12 +160,30 @@ class Database:
         row = self.cursor.fetchone()
         return row[0] if row else None
 
+    def get_video_by_url(self, url):
+        """Return (id, watched) for an active video by URL, or None."""
+        self.cursor.execute(
+            "SELECT id, watched FROM videos WHERE url = ? AND is_deleted = 0", (url,)
+        )
+        return self.cursor.fetchone()
+
+    def mark_watched_silent(self, vid_id):
+        """Mark watched without emitting data_changed (used by Obsidian import)."""
+        self.cursor.execute("UPDATE videos SET watched = 1 WHERE id = ?", (vid_id,))
+        self.conn.commit()
+
+    def mark_unwatched_silent(self, vid_id):
+        """Mark unwatched without emitting data_changed (used by Obsidian import)."""
+        self.cursor.execute("UPDATE videos SET watched = 0 WHERE id = ?", (vid_id,))
+        self.conn.commit()
+
     def bulk_soft_delete(self, vid_ids):
         if not vid_ids:
             return
         placeholders = ','.join('?' * len(vid_ids))
         self.cursor.execute(f"UPDATE videos SET is_deleted=1 WHERE id IN ({placeholders})", vid_ids)
         self.conn.commit()
+        self.data_changed.emit()
 
     def bulk_mark_watched(self, vid_ids):
         if not vid_ids:
@@ -160,6 +191,7 @@ class Database:
         placeholders = ','.join('?' * len(vid_ids))
         self.cursor.execute(f"UPDATE videos SET watched=1 WHERE id IN ({placeholders})", vid_ids)
         self.conn.commit()
+        self.data_changed.emit()
 
     def bulk_move_to_tab(self, vid_ids, tab_index):
         if not vid_ids:
@@ -167,6 +199,7 @@ class Database:
         placeholders = ','.join('?' * len(vid_ids))
         self.cursor.execute(f"UPDATE videos SET tab_index=? WHERE id IN ({placeholders})", [tab_index] + vid_ids)
         self.conn.commit()
+        self.data_changed.emit()
 
     def get_min_row_order(self):
         self.cursor.execute("SELECT MIN(row_order) FROM videos")

@@ -30,6 +30,7 @@ lavida/
 │   ├── database.py            # Database class - centralized DB operations
 │   ├── theme.py               # Shared color tokens, theme presets, apply_theme()
 │   ├── workers.py             # GlobalInputListener - QThread for mouse scroll events
+│   ├── obsidian_export.py     # ObsidianExporter - two-way Obsidian vault sync
 │   └── ui/
 │       ├── __init__.py
 │       ├── main_window.py     # LavidaApp - main window, drag-drop, UI setup
@@ -57,7 +58,7 @@ lavida/
 
 ## Key Classes
 
-- **Database** (`src/database.py`): Centralized database operations - video CRUD, settings persistence, schema migrations.
+- **Database** (`src/database.py`): Centralized database operations - video CRUD, settings persistence, schema migrations. Includes silent watchers for Obsidian sync (`mark_watched_silent`, `mark_unwatched_silent`, `get_video_by_url`).
 - **LavidaApp** (`src/ui/main_window.py`): Main application window. Handles drag-drop, window resizing, tab management, fullscreen detection, title fetching, and all core UI.
 - **SettingsDialog** (`src/ui/settings_dialog.py`): Settings panel with theme selection, startup options, activation key rebinding, and shortcut reference.
 - **VideoCard** (`src/ui/widgets.py`): Individual video item widget displaying title and thumbnail with watched/unwatched state.
@@ -65,6 +66,7 @@ lavida/
 - **DragHandle** (`src/ui/widgets.py`): Visual grip handle (6-dot pattern) for dragging videos.
 - **ThumbnailPreview** (`src/ui/widgets.py`): Singleton popup that shows an enlarged thumbnail on hover, positioned to the right of the main window.
 - **GlobalInputListener** (`src/workers.py`): QThread that listens for a configurable activation key (mouse button, scroll direction, or keyboard key) to toggle window visibility. Supports a detection mode for rebinding from the settings dialog.
+- **ObsidianExporter** (`src/obsidian_export.py`): Two-way sync with Obsidian vaults. Watches `vault_path/Lavida/` directory for markdown file changes and syncs watched state bidirectionally. Exports app data as markdown tabs, imports checkbox state from Obsidian without UI updates (silent sync).
 
 ## Architecture
 
@@ -115,13 +117,65 @@ Base colors are constant; accent colors change with the selected theme.
 ### Database Schema
 SQLite database (`lavida.db`) stores:
 - **videos**: id, url, title, watched status, tab assignment, display order, deletion flag, thumbnail_path
-- **settings**: window position/size, theme, tab names, start_visible (persisted across sessions)
+- **settings**: window position/size, theme, tab names, start_visible, obsidian_vault_path (persisted across sessions)
+
+### Obsidian Two-Way Sync
+Lavida can sync with Obsidian vaults via markdown files in a `Lavida/` folder. When configured:
+
+1. **Export (App → Obsidian)**: Videos are written to markdown files (one per tab) with format:
+   ```markdown
+   - [x] [Video Title](https://youtube.com/watch?v=...)  # checked = watched
+   - [ ] [Other Video](https://youtube.com/watch?v=...)  # unchecked = unwatched
+   ```
+
+2. **Import (Obsidian → App)**: Changes to markdown checkbox state are detected via `QFileSystemWatcher` and synced silently (no UI updates) using `mark_watched_silent()` and `mark_unwatched_silent()`. A debounce timer (1s) prevents rapid re-reads.
+
+3. **Loop Prevention**: `_writing` flag prevents reading vault while app is exporting, debounce timers prevent thrashing.
+
+4. **Tab Renaming**: When a tab is renamed in the app, the corresponding `.md` file is renamed in the vault.
 
 ### Threading Model
 - **Main thread**: PyQt6 event loop, UI rendering
 - **GlobalInputListener thread**: pynput mouse listener for global hotkey detection (0.4s debounce)
 - **Title fetching**: Background thread for HTTP requests (does not block UI)
 - **Fullscreen check**: QTimer polling at 100ms intervals
+- **Obsidian watcher thread**: `QFileSystemWatcher` monitors `vault_path/Lavida/` for changes, fires read debounce timer (1s) when files modified
+
+## Database API Reference
+
+### Public Methods
+
+**Video Operations**
+- `add_video(url, title, tab_index, row_order) → vid_id` — Create video entry
+- `update_video_title(vid_id, title, thumbnail_path="")` — Update title and thumbnail
+- `update_video_order(vid_id, order)` — Update display order
+- `mark_watched(vid_id)` — Mark watched and emit `data_changed` signal
+- `mark_unwatched(vid_id)` — Mark unwatched and emit `data_changed` signal
+- `mark_watched_silent(vid_id)` — Mark watched without signal (Obsidian import use only)
+- `mark_unwatched_silent(vid_id)` — Mark unwatched without signal (Obsidian import use only)
+- `soft_delete_video(vid_id)` — Move to history (is_deleted=1)
+- `restore_video(vid_id)` — Restore from history
+- `hard_delete_video(vid_id)` — Permanently delete
+- `get_video_by_url(url) → (id, watched) | None` — Lookup video for Obsidian sync
+- `find_video_by_url(url) → vid_id | None` — Lookup active video
+- `get_video_tab(vid_id) → tab_index` — Get tab assignment
+- `get_active_videos() → [(id, title, url, watched, tab_index, thumbnail_path), ...]` — All active videos
+- `get_deleted_videos() → [(id, title, url, watched, thumbnail_path), ...]` — History videos
+
+**Bulk Operations**
+- `bulk_soft_delete(vid_ids)` — Move multiple videos to history
+- `bulk_mark_watched(vid_ids)` — Mark multiple watched
+- `bulk_move_to_tab(vid_ids, tab_index)` — Move multiple to tab
+
+**Settings**
+- `save_setting(key, value)` — Persist key-value pair
+- `load_setting(key, default=None)` — Retrieve saved setting
+- `save_window_settings(x, y, width, height)` — Save window geometry
+- `load_window_settings() → (x, y, width, height) | None` — Restore geometry
+
+**Utility**
+- `get_min_row_order() → int` — Get lowest row order value
+- `close()` — Close database connection (called on app shutdown)
 
 ## Environment
 

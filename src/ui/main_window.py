@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QTimer
 
 import src.theme as theme
 from src.database import Database
+from src.obsidian_export import ObsidianExporter
 from src.workers import GlobalInputListener
 from src.ui.widgets import VideoCard, DraggableListWidget
 
@@ -102,6 +103,14 @@ class LavidaApp(QMainWindow):
 
         self.setup_ui()
         self.load_data()
+
+        self.obsidian_exporter = ObsidianExporter(self.db)
+        self.db.data_changed.connect(self.obsidian_exporter._schedule_write)
+        self.obsidian_exporter.import_complete.connect(self.load_data)
+        vault_path = self.db.load_setting('obsidian_vault_path', '')
+        if vault_path:
+            tab_names = [self.tabs.tabText(i) for i in range(3)]
+            self.obsidian_exporter.configure(vault_path, tab_names)
 
         self.update_title_signal.connect(self.update_item_title)
 
@@ -608,6 +617,8 @@ class LavidaApp(QMainWindow):
             if new_name:
                 self.tabs.setTabText(index, new_name)
                 self.db.save_setting(f'tab_name_{index}', new_name)
+                tab_names = [self.tabs.tabText(i) for i in range(3)]
+                self.obsidian_exporter.update_tab_names(tab_names)
 
     # -- Settings dialog --
 
@@ -615,6 +626,10 @@ class LavidaApp(QMainWindow):
         from src.ui.settings_dialog import SettingsDialog
         dialog = SettingsDialog(self, self.db)
         dialog.exec()
+
+    def configure_obsidian_export(self, path):
+        tab_names = [self.tabs.tabText(i) for i in range(3)]
+        self.obsidian_exporter.configure(path, tab_names)
 
     # -- Search --
 
@@ -740,6 +755,7 @@ class LavidaApp(QMainWindow):
     def close_application(self):
         self._fullscreen_timer.stop()
         self._save_window_position()
+        self.obsidian_exporter.shutdown()
         self.db.close()
         QApplication.quit()
 
