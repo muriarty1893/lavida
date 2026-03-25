@@ -29,7 +29,7 @@ lavida/
 │   ├── __init__.py
 │   ├── database.py            # Database class - centralized DB operations
 │   ├── theme.py               # Shared color tokens, theme presets, apply_theme()
-│   ├── workers.py             # GlobalInputListener - QThread for mouse scroll events
+│   ├── workers.py             # GlobalInputListener, PlaylistFetchWorker - background QThread workers
 │   ├── obsidian_export.py     # ObsidianExporter - two-way Obsidian vault sync
 │   └── ui/
 │       ├── __init__.py
@@ -61,11 +61,12 @@ lavida/
 - **Database** (`src/database.py`): Centralized database operations - video CRUD, settings persistence, schema migrations. Includes silent watchers for Obsidian sync (`mark_watched_silent`, `mark_unwatched_silent`, `get_video_by_url`).
 - **LavidaApp** (`src/ui/main_window.py`): Main application window. Handles drag-drop, window resizing, tab management, fullscreen detection, title fetching, and all core UI.
 - **SettingsDialog** (`src/ui/settings_dialog.py`): Settings panel with theme selection, startup options, activation key rebinding, and shortcut reference.
-- **VideoCard** (`src/ui/widgets.py`): Individual video item widget displaying title and thumbnail with watched/unwatched state.
+- **VideoCard** (`src/ui/widgets.py`): Individual video item widget. Displays thumbnail with duration badge overlay, title, channel subtitle, and watched/unwatched state. Exposes `set_metadata(duration, channel)` to populate those fields after creation.
 - **DraggableListWidget** (`src/ui/widgets.py`): Tab list widget supporting drag-and-drop reordering of videos.
 - **DragHandle** (`src/ui/widgets.py`): Visual grip handle (6-dot pattern) for dragging videos.
 - **ThumbnailPreview** (`src/ui/widgets.py`): Singleton popup that shows an enlarged thumbnail on hover, positioned to the right of the main window.
 - **GlobalInputListener** (`src/workers.py`): QThread that listens for a configurable activation key (mouse button, scroll direction, or keyboard key) to toggle window visibility. Supports a detection mode for rebinding from the settings dialog.
+- **PlaylistFetchWorker** (`src/workers.py`): QThread that scrapes `ytInitialData` JSON from a YouTube playlist page to extract video IDs and titles. Emits `video_found(url, title)`, `progress(current, total)`, `finished_signal()`, and `error(msg)` signals. Handles only the first ~100 videos (no pagination).
 - **ObsidianExporter** (`src/obsidian_export.py`): Two-way sync with Obsidian vaults. Watches `vault_path/Lavida/` directory for markdown file changes and syncs watched state bidirectionally. Exports app data as markdown tabs, imports checkbox state from Obsidian without UI updates (silent sync).
 
 ## Architecture
@@ -73,7 +74,7 @@ lavida/
 ### UI Design
 - **Frameless, translucent window** with custom drag/resize handling
 - **Dark warm theme** with 5 switchable accent color presets (Rust, Ocean, Forest, Amethyst, Cyan)
-- **4 tabs**: 3 renameable work tabs + 1 History tab
+- **Dynamic tabs**: N renameable work tabs (default 3) + 1 locked History tab + "+" tab to add new tabs; work tabs can be reordered by dragging
 - **Always-on-top** window for quick access
 - **Fullscreen detection** auto-hides when other apps go fullscreen
 
@@ -101,13 +102,14 @@ Base colors are constant; accent colors change with the selected theme.
 | Action | Effect |
 |--------|--------|
 | Left-click video | Open in browser + mark watched |
-| Right-click video | Mark unwatched |
+| Right-click video | Open context menu (open, copy URL, watch state, move to tab, delete/restore) |
 | Middle-click (scroll click) video | Delete to history |
 | Drag handle | Reorder videos within tab |
+| Drag tab | Reorder work tabs (History and "+" are locked) |
 | Activation key (global, configurable) | Toggle window visibility |
 | Drag window edges/corners | Resize window |
 | Drag title bar area | Move window |
-| "+ Add" button | Grab current browser URL and add video |
+| "+ Add" button | Grab current browser URL and add video (or import playlist) |
 | Search button | Show/hide search input to filter videos |
 | Settings button (⚙) | Open settings panel |
 | Hide button | Hide window |
@@ -116,7 +118,8 @@ Base colors are constant; accent colors change with the selected theme.
 
 ### Database Schema
 SQLite database (`lavida.db`) stores:
-- **videos**: id, url, title, watched status, tab assignment, display order, deletion flag, thumbnail_path
+- **videos**: id, url, title, watched, tab_id, row_order, is_deleted, thumbnail_path, duration, channel, deleted_at
+- **tabs**: id, name, sort_order, is_history
 - **settings**: window position/size, theme, tab names, start_visible, obsidian_vault_path (persisted across sessions)
 
 ### Obsidian Two-Way Sync
@@ -146,26 +149,34 @@ Lavida can sync with Obsidian vaults via markdown files in a `Lavida/` folder. W
 ### Public Methods
 
 **Video Operations**
-- `add_video(url, title, tab_index, row_order) → vid_id` — Create video entry
-- `update_video_title(vid_id, title, thumbnail_path="")` — Update title and thumbnail
+- `add_video(url, title, tab_id, row_order) → vid_id` — Create video entry
+- `update_video_title(vid_id, title, thumbnail_path="", duration="", channel="")` — Update title, thumbnail, and metadata
 - `update_video_order(vid_id, order)` — Update display order
 - `mark_watched(vid_id)` — Mark watched and emit `data_changed` signal
 - `mark_unwatched(vid_id)` — Mark unwatched and emit `data_changed` signal
 - `mark_watched_silent(vid_id)` — Mark watched without signal (Obsidian import use only)
 - `mark_unwatched_silent(vid_id)` — Mark unwatched without signal (Obsidian import use only)
-- `soft_delete_video(vid_id)` — Move to history (is_deleted=1)
-- `restore_video(vid_id)` — Restore from history
+- `soft_delete_video(vid_id)` — Move to history (is_deleted=1, sets deleted_at timestamp)
+- `restore_video(vid_id)` — Restore from history (clears deleted_at)
 - `hard_delete_video(vid_id)` — Permanently delete
+- `reassign_video_tab(vid_id, tab_id)` — Move video to a different tab
 - `get_video_by_url(url) → (id, watched) | None` — Lookup video for Obsidian sync
 - `find_video_by_url(url) → vid_id | None` — Lookup active video
-- `get_video_tab(vid_id) → tab_index` — Get tab assignment
-- `get_active_videos() → [(id, title, url, watched, tab_index, thumbnail_path), ...]` — All active videos
-- `get_deleted_videos() → [(id, title, url, watched, thumbnail_path), ...]` — History videos
+- `get_video_tab(vid_id) → tab_id` — Get tab assignment
+- `get_active_videos() → [(id, title, url, watched, tab_id, thumbnail_path, duration, channel), ...]` — All active videos
+- `get_deleted_videos() → [(id, title, url, watched, thumbnail_path, duration, channel), ...]` — History videos, sorted by deleted_at DESC
+
+**Tab Operations**
+- `get_tabs() → [(id, name, sort_order, is_history), ...]` — All tabs
+- `add_tab(name, sort_order) → tab_id` — Create new work tab
+- `delete_tab(tab_id)` — Soft-delete all videos in tab, remove tab row
+- `rename_tab(tab_id, new_name)` — Rename a tab
+- `update_tab_sort_orders(tab_ids)` — Persist drag-reordered tab order
 
 **Bulk Operations**
-- `bulk_soft_delete(vid_ids)` — Move multiple videos to history
+- `bulk_soft_delete(vid_ids)` — Move multiple videos to history (sets deleted_at)
 - `bulk_mark_watched(vid_ids)` — Mark multiple watched
-- `bulk_move_to_tab(vid_ids, tab_index)` — Move multiple to tab
+- `bulk_move_to_tab(vid_ids, tab_id)` — Move multiple to tab
 
 **Settings**
 - `save_setting(key, value)` — Persist key-value pair
