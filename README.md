@@ -40,13 +40,10 @@ To change the activation key later, open Settings and click the activation key b
 - **Hide** - Hide the window (bring back with your activation key)
 - **Quit** - Exit the application
 
-## Screenshots
+## Screenshot
 
-![](img/ss1.png)
+![](img/app_ss.png)
 
-![](img/ss2.png)
-
-![](img/ss3.png)
 
 ## Contributing
 
