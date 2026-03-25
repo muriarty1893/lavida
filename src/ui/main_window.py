@@ -1066,7 +1066,8 @@ class LavidaApp(QMainWindow):
             duration = item.data(Qt.ItemDataRole.UserRole + 5) or ""
             channel = item.data(Qt.ItemDataRole.UserRole + 6) or ""
             self.create_card_item(vid_id, title, url, watched, self.history_list,
-                                  thumbnail_path=thumb_path, duration=duration, channel=channel)
+                                  insert_top=True, thumbnail_path=thumb_path,
+                                  duration=duration, channel=channel)
 
         self.check_empty_state()
 

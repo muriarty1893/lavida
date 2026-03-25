@@ -45,6 +45,7 @@ class Database(QObject):
             "ALTER TABLE videos ADD COLUMN tab_id INTEGER",
             "ALTER TABLE videos ADD COLUMN duration TEXT DEFAULT ''",
             "ALTER TABLE videos ADD COLUMN channel TEXT DEFAULT ''",
+            "ALTER TABLE videos ADD COLUMN deleted_at TEXT DEFAULT ''",
         ]
         for sql in migrations:
             try:
@@ -170,7 +171,7 @@ class Database(QObject):
     def delete_tab(self, tab_id):
         """Soft-delete all videos in the tab, then remove the tab row."""
         self.cursor.execute(
-            "UPDATE videos SET is_deleted=1 WHERE tab_id=? AND is_deleted=0", (tab_id,)
+            "UPDATE videos SET is_deleted=1, deleted_at=datetime('now') WHERE tab_id=? AND is_deleted=0", (tab_id,)
         )
         self.cursor.execute("DELETE FROM tabs WHERE id=?", (tab_id,))
         self.conn.commit()
@@ -228,7 +229,10 @@ class Database(QObject):
         self.data_changed.emit()
 
     def soft_delete_video(self, vid_id):
-        self.cursor.execute("UPDATE videos SET is_deleted=1 WHERE id = ?", (vid_id,))
+        self.cursor.execute(
+            "UPDATE videos SET is_deleted=1, deleted_at=datetime('now') WHERE id = ?",
+            (vid_id,)
+        )
         self.conn.commit()
         self.data_changed.emit()
 
@@ -238,7 +242,9 @@ class Database(QObject):
         self.data_changed.emit()
 
     def restore_video(self, vid_id):
-        self.cursor.execute("UPDATE videos SET is_deleted=0 WHERE id = ?", (vid_id,))
+        self.cursor.execute(
+            "UPDATE videos SET is_deleted=0, deleted_at='' WHERE id = ?", (vid_id,)
+        )
         self.conn.commit()
         self.data_changed.emit()
 
@@ -257,7 +263,7 @@ class Database(QObject):
     def get_deleted_videos(self):
         self.cursor.execute(
             "SELECT id, title, url, watched, thumbnail_path, duration, channel "
-            "FROM videos WHERE is_deleted=1 ORDER BY id DESC"
+            "FROM videos WHERE is_deleted=1 ORDER BY deleted_at DESC, id DESC"
         )
         return self.cursor.fetchall()
 
@@ -289,7 +295,7 @@ class Database(QObject):
         if not vid_ids:
             return
         placeholders = ','.join('?' * len(vid_ids))
-        self.cursor.execute(f"UPDATE videos SET is_deleted=1 WHERE id IN ({placeholders})", vid_ids)
+        self.cursor.execute(f"UPDATE videos SET is_deleted=1, deleted_at=datetime('now') WHERE id IN ({placeholders})", vid_ids)
         self.conn.commit()
         self.data_changed.emit()
 

@@ -8,6 +8,10 @@ A lightweight, always-on-top Linux desktop widget for managing YouTube video lin
 - **(Toggleable) Always on top** with frameless, resizable window
 - **Auto-hide** when another app goes fullscreen
 - **Settings panel** for theme, startup, activation key, and shortcut reference
+- **Right-click context menu** with all actions (open, copy URL, watch state, move to tab, delete/restore)
+- **Tab reordering** via drag-and-drop
+- **Video metadata** — duration badge and channel name shown on each card
+- **Playlist import** — paste a playlist URL to import all videos at once with a progress bar
 
 ## Usage
 
@@ -26,10 +30,11 @@ To change the activation key later, open Settings and click the activation key b
 | --- | --- |
 | Drag & drop URL | Add video to current tab |
 | Left click | Open in browser, mark as watched |
-| Right click | Mark as unwatched |
+| Right-click | Context menu (open, copy URL, watch state, move to tab, delete/restore) |
 | Middle click | Delete to history |
 | Activation key | Toggle window visibility (global, configurable) |
 | Double-click tab | Rename tab |
+| Drag tab | Reorder work tabs |
 | Drag and drop a video to the left corner of the monitor | Toggle window visibility shortly |
 
 ### Buttons
