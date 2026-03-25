@@ -197,7 +197,7 @@ class SettingsDialog(QDialog):
         self._toggle_key_lbl = None
         shortcuts = [
             ("Left click", "Open video"),
-            ("Right click", "Mark unwatched"),
+            ("Right click", "Context menu"),
             ("Middle click", "Delete to history"),
             (activation_key_label(current_key), "Toggle window"),
             ("Double-click tab", "Rename tab"),

@@ -112,17 +112,22 @@ class ObsidianExporter(QObject):
         try:
             active = self._db.get_active_videos()
             deleted = self._db.get_deleted_videos()
+            work_tabs = self._db.get_work_tabs()  # [(id, name, sort_order), ...]
 
-            tabs = {i: [] for i in range(len(self._tab_names))}
-            for _vid_id, title, url, watched, tab_index, _thumb in active:
-                idx = tab_index if 0 <= tab_index < len(self._tab_names) else 0
-                tabs[idx].append((title, url, watched))
+            tabs = {tab_id: [] for tab_id, _, _ in work_tabs}
+            first_tab_id = work_tabs[0][0] if work_tabs else None
 
-            for i, name in enumerate(self._tab_names):
-                content = self._format_tab(name, tabs.get(i, []))
+            for _vid_id, title, url, watched, tab_id, _thumb, _dur, _chan in active:
+                if tab_id in tabs:
+                    tabs[tab_id].append((title, url, watched))
+                elif first_tab_id:
+                    tabs[first_tab_id].append((title, url, watched))
+
+            for tab_id, name, _ in work_tabs:
+                content = self._format_tab(name, tabs.get(tab_id, []))
                 self._atomic_write(os.path.join(self._lavida_dir, f"{name}.md"), content)
 
-            history_videos = [(title, url, watched) for _id, title, url, watched, _thumb in deleted]
+            history_videos = [(title, url, watched) for _id, title, url, watched, _thumb, _dur, _chan in deleted]
             self._atomic_write(
                 os.path.join(self._lavida_dir, "History.md"),
                 self._format_tab("History", history_videos),
@@ -148,9 +153,20 @@ class ObsidianExporter(QObject):
             f.write(content)
         os.replace(tmp, path)
 
-    def update_tab_names(self, tab_names):
+    def update_tab_names(self, tab_names, removed_names=None):
         if self._vault_path and self._lavida_dir:
-            for old, new in zip(self._tab_names, tab_names):
+            # Remove files for deleted tabs
+            if removed_names:
+                for name in removed_names:
+                    path = os.path.join(self._lavida_dir, f"{name}.md")
+                    try:
+                        if os.path.exists(path):
+                            os.remove(path)
+                    except Exception:
+                        logger.warning("Failed to remove tab file %s", path, exc_info=True)
+            # Rename changed tabs (compare old names minus removed with new names)
+            old_names = [n for n in self._tab_names if not removed_names or n not in removed_names]
+            for old, new in zip(old_names, tab_names):
                 if old != new:
                     old_path = os.path.join(self._lavida_dir, f"{old}.md")
                     new_path = os.path.join(self._lavida_dir, f"{new}.md")

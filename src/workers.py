@@ -1,7 +1,13 @@
+import re
+import json
 import time
+import logging
 import threading
+import requests
 from pynput import mouse, keyboard
 from PyQt6.QtCore import QThread, pyqtSignal
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_ACTIVATION_KEY = 'scroll_right'
 
@@ -171,3 +177,75 @@ class GlobalInputListener(QThread):
             self.detected_signal.emit(resolved)
         elif resolved == self.activation_key:
             self._try_toggle()
+
+
+class PlaylistFetchWorker(QThread):
+    """Fetches video URLs and titles from a YouTube playlist page."""
+    video_found = pyqtSignal(str, str)       # url, title
+    progress = pyqtSignal(int, int)          # current, total
+    finished_signal = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, playlist_url):
+        super().__init__()
+        self.playlist_url = playlist_url
+
+    def run(self):
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            resp = requests.get(self.playlist_url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                self.error.emit(f"HTTP {resp.status_code}")
+                return
+
+            # Extract ytInitialData JSON from page
+            match = re.search(r'var ytInitialData\s*=\s*(\{.+?\});\s*</script>', resp.text)
+            if not match:
+                self.error.emit("Could not parse playlist data")
+                return
+
+            data = json.loads(match.group(1))
+
+            # Navigate to playlist video list
+            videos = []
+            try:
+                tabs = data['contents']['twoColumnBrowseResultsRenderer']['tabs']
+                for tab in tabs:
+                    section = tab.get('tabRenderer', {}).get('content', {})
+                    section_list = section.get('sectionListRenderer', {}).get('contents', [])
+                    for s in section_list:
+                        items = (s.get('itemSectionRenderer', {})
+                                  .get('contents', [{}])[0]
+                                  .get('playlistVideoListRenderer', {})
+                                  .get('contents', []))
+                        for item in items:
+                            renderer = item.get('playlistVideoRenderer')
+                            if not renderer:
+                                continue
+                            video_id = renderer.get('videoId', '')
+                            title_runs = renderer.get('title', {}).get('runs', [])
+                            title = title_runs[0]['text'] if title_runs else video_id
+                            if video_id:
+                                videos.append((
+                                    f"https://www.youtube.com/watch?v={video_id}",
+                                    title
+                                ))
+            except (KeyError, IndexError, TypeError):
+                self.error.emit("Could not extract videos from playlist")
+                return
+
+            if not videos:
+                self.error.emit("No videos found in playlist")
+                return
+
+            total = len(videos)
+            for i, (url, title) in enumerate(videos):
+                self.video_found.emit(url, title)
+                self.progress.emit(i + 1, total)
+
+        except requests.RequestException as e:
+            self.error.emit(str(e))
+        except (json.JSONDecodeError, ValueError) as e:
+            self.error.emit(f"Parse error: {e}")
+        finally:
+            self.finished_signal.emit()

@@ -1,23 +1,41 @@
 import os
 import re
+import json
 import logging
 import subprocess
 import requests
 import threading
 from bs4 import BeautifulSoup
 
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QTabWidget,
-                             QVBoxLayout, QHBoxLayout, QFrame,
+from PyQt6.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QTabWidget, QTabBar,
+                             QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QProgressBar,
                              QApplication, QListWidgetItem, QLineEdit, QInputDialog)
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QTimer, QObject, QEvent
 
 import src.theme as theme
 from src.database import Database
 from src.obsidian_export import ObsidianExporter
-from src.workers import GlobalInputListener
+from src.workers import GlobalInputListener, PlaylistFetchWorker
 from src.ui.widgets import VideoCard, DraggableListWidget
 
 logger = logging.getLogger(__name__)
+
+
+class _TabBarDragFilter(QObject):
+    """Prevents dragging the History and '+' tabs."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._app = app
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonPress:
+            self._pressed_idx = obj.tabAt(event.pos())
+        elif event.type() == QEvent.Type.MouseMove:
+            # Block drag only if the press started on a protected tab
+            if getattr(self, '_pressed_idx', -1) >= self._app.work_tab_count:
+                return True
+        return False
 
 
 class DropEdge(QWidget):
@@ -75,7 +93,7 @@ class DropEdge(QWidget):
 
 
 class LavidaApp(QMainWindow):
-    update_title_signal = pyqtSignal(str, str, int, int)
+    update_title_signal = pyqtSignal(str, str, int, int, str, str)
 
     def __init__(self):
         super().__init__()
@@ -109,8 +127,7 @@ class LavidaApp(QMainWindow):
         self.obsidian_exporter.import_complete.connect(self.load_data)
         vault_path = self.db.load_setting('obsidian_vault_path', '')
         if vault_path:
-            tab_names = [self.tabs.tabText(i) for i in range(3)]
-            self.obsidian_exporter.configure(vault_path, tab_names)
+            self.obsidian_exporter.configure(vault_path, self._get_tab_names())
 
         self.update_title_signal.connect(self.update_item_title)
 
@@ -371,22 +388,64 @@ class LavidaApp(QMainWindow):
         self.frame_layout.addWidget(self.no_results_lbl)
 
         # -- Tabs --
+        self._tab_id_map = {}       # {tab_id: DraggableListWidget}
+        self._work_tab_ids = []     # ordered list of work tab IDs
+        self._history_tab_id = None
+        self._max_tabs = 10
+
         self.tabs = QTabWidget()
+        self.tabs.tabBar().setMovable(True)
+        self._tab_drag_filter = _TabBarDragFilter(self)
+        self.tabs.tabBar().installEventFilter(self._tab_drag_filter)
+        self.tabs.tabBar().tabMoved.connect(self._on_tab_moved)
         self.tabs.tabBarDoubleClicked.connect(self._rename_tab)
 
         self.tab_lists = []
-        for i in range(3):
-            lst = DraggableListWidget(self, i)
+        for tab_id, name, _ in self.db.get_work_tabs():
+            lst = DraggableListWidget(self, tab_id)
             self.tab_lists.append(lst)
-            tab_name = self.db.load_setting(f'tab_name_{i}', f"Tab {i + 1}")
-            self.tabs.addTab(lst, tab_name)
+            self._tab_id_map[tab_id] = lst
+            self._work_tab_ids.append(tab_id)
+            self.tabs.addTab(lst, name)
+            close_btn = self._make_close_btn(tab_id)
+            self.tabs.tabBar().setTabButton(
+                self.tabs.count() - 1, QTabBar.ButtonPosition.RightSide, close_btn
+            )
 
-        self.history_list = DraggableListWidget(self, 99)
+        self._history_tab_id = self.db.get_history_tab_id()
+        self.history_list = DraggableListWidget(self, self._history_tab_id)
         self.tab_lists.append(self.history_list)
+        self._tab_id_map[self._history_tab_id] = self.history_list
         self.tabs.addTab(self.history_list, "History")
+        # No close button on History tab
 
-        self.tabs.currentChanged.connect(lambda: self.filter_videos(self.search_input.text()))
+        # "+" tab — always last, acts as a button to add new tabs
+        self._plus_placeholder = QWidget()
+        self.tabs.addTab(self._plus_placeholder, "+")
+        self.tabs.tabBar().setTabButton(
+            self.tabs.count() - 1, QTabBar.ButtonPosition.RightSide, None
+        )
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         self.frame_layout.addWidget(self.tabs)
+
+        # -- Playlist import progress bar --
+        self.playlist_progress = QProgressBar()
+        self.playlist_progress.setFixedHeight(3)
+        self.playlist_progress.setTextVisible(False)
+        self.playlist_progress.setStyleSheet(f"""
+            QProgressBar {{
+                background: {theme.CLR_BASE};
+                border: none;
+                border-radius: 1px;
+            }}
+            QProgressBar::chunk {{
+                background: {theme.CLR_ACCENT};
+                border-radius: 1px;
+            }}
+        """)
+        self.playlist_progress.hide()
+        self.frame_layout.addWidget(self.playlist_progress)
 
         self.empty_lbl = QLabel("Drop YouTube links here")
         self.empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -501,7 +560,45 @@ class LavidaApp(QMainWindow):
                 color: {theme.CLR_TEXT_DIM};
                 background: rgba(255,255,255,0.03);
             }}
+            QTabBar::tab:last {{
+                color: {theme.CLR_TEXT_MUTED};
+                min-width: 20px;
+                padding: 7px 10px;
+                font-size: 16px;
+                font-weight: 400;
+                letter-spacing: 0px;
+                border-bottom: none;
+            }}
+            QTabBar::tab:last:hover {{
+                color: {theme.CLR_TEXT};
+                background: rgba(255,255,255,0.06);
+            }}
+            QTabBar::tab:last:selected {{
+                color: {theme.CLR_TEXT_MUTED};
+                border-bottom: none;
+                background: transparent;
+            }}
         """)
+
+        close_btn_style = f"""
+            QPushButton {{
+                background: transparent;
+                color: {theme.CLR_TEXT_MUTED};
+                border: none;
+                border-radius: 3px;
+                font-size: 13px;
+                font-weight: bold;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                color: #e05252;
+                background: rgba(224, 82, 82, 0.18);
+            }}
+        """
+        for i, tab_id in enumerate(self._work_tab_ids):
+            btn = self.tabs.tabBar().tabButton(i, QTabBar.ButtonPosition.RightSide)
+            if btn:
+                btn.setStyleSheet(close_btn_style)
 
         self.empty_lbl.setStyleSheet(f"""
             color: {theme.CLR_TEXT_MUTED};
@@ -569,8 +666,114 @@ class LavidaApp(QMainWindow):
 
     # -- Tab rename --
 
+    @property
+    def work_tab_count(self):
+        return len(self._work_tab_ids)
+
+    def _get_tab_names(self):
+        return [self.tabs.tabText(i) for i in range(self.work_tab_count)]
+
+    def _make_close_btn(self, tab_id):
+        btn = QPushButton("×")
+        btn.setFixedSize(16, 16)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda: self._close_tab_by_id(tab_id))
+        return btn
+
+    def _on_tab_moved(self, from_idx, to_idx):
+        # Reject moves involving History or "+" tabs
+        if from_idx >= self.work_tab_count or to_idx >= self.work_tab_count:
+            self.tabs.tabBar().moveTab(to_idx, from_idx)
+            return
+        # Reorder internal structures
+        tid = self._work_tab_ids.pop(from_idx)
+        self._work_tab_ids.insert(to_idx, tid)
+        lst = self.tab_lists.pop(from_idx)
+        self.tab_lists.insert(to_idx, lst)
+        # Persist
+        self.db.update_tab_sort_orders(self._work_tab_ids)
+        self.obsidian_exporter.update_tab_names(self._get_tab_names())
+
+    def _on_tab_changed(self, index):
+        plus_idx = self.tabs.count() - 1
+        if index == plus_idx:
+            # "+" tab clicked — redirect to last work tab, then create new tab
+            self.tabs.setCurrentIndex(self.work_tab_count - 1)
+            if self.work_tab_count < self._max_tabs:
+                self._add_tab()
+            return
+        self.filter_videos(self.search_input.text())
+
+    def _add_tab(self):
+        if self.work_tab_count >= self._max_tabs:
+            return
+        sort_order = self.db.get_next_sort_order()
+        existing = set(self._get_tab_names())
+        n = self.work_tab_count + 1
+        name = f"Tab {n}"
+        while name in existing:
+            n += 1
+            name = f"Tab {n}"
+        tab_id = self.db.create_tab(name, sort_order)
+        lst = DraggableListWidget(self, tab_id)
+        insert_idx = self.work_tab_count  # before History and "+" tab
+        self._work_tab_ids.append(tab_id)
+        self._tab_id_map[tab_id] = lst
+        self.tab_lists.insert(-1, lst)
+        self.tabs.insertTab(insert_idx, lst, name)
+        close_btn = self._make_close_btn(tab_id)
+        self.tabs.tabBar().setTabButton(insert_idx, QTabBar.ButtonPosition.RightSide, close_btn)
+        self._apply_styles()
+        self.tabs.setCurrentIndex(insert_idx)
+        self.obsidian_exporter.update_tab_names(self._get_tab_names())
+
+    def _close_tab_by_id(self, tab_id):
+        if tab_id not in self._tab_id_map:
+            return
+        index = self._work_tab_ids.index(tab_id)
+        self._close_tab(index)
+
+    def _close_tab(self, index):
+        if self.work_tab_count <= 1:
+            return
+        tab_name = self.tabs.tabText(index)
+        tab_id = self._work_tab_ids[index]
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Delete Tab")
+        msg.setText(f"Delete tab '{tab_name}'?\nVideos will be moved to History.")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
+        msg.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        msg.setStyleSheet(f"""
+            QMessageBox {{ background: {theme.CLR_SURFACE}; }}
+            QLabel {{ color: {theme.CLR_TEXT}; font-size: 12px; }}
+            QPushButton {{
+                background: {theme.CLR_ELEVATED};
+                color: {theme.CLR_TEXT};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-size: 12px;
+                font-weight: 600;
+                min-width: 60px;
+            }}
+            QPushButton:hover {{ background: {theme.CLR_BORDER}; }}
+        """)
+        if msg.exec() != QMessageBox.StandardButton.Yes:
+            return
+        self.db.delete_tab(tab_id)
+        self._work_tab_ids.pop(index)
+        del self._tab_id_map[tab_id]
+        self.tab_lists.pop(index)
+        self.tabs.removeTab(index)
+        # Stay on adjacent tab
+        new_count = self.work_tab_count
+        if index >= new_count:
+            self.tabs.setCurrentIndex(max(0, new_count - 1))
+        self.load_data()
+        self.obsidian_exporter.update_tab_names(self._get_tab_names(), removed_names=[tab_name])
+
     def _rename_tab(self, index):
-        if index >= 3:
+        if index >= self.work_tab_count:
             return  # Don't rename History tab
 
         current_name = self.tabs.tabText(index)
@@ -616,9 +819,8 @@ class LavidaApp(QMainWindow):
             new_name = dialog.textValue().strip()
             if new_name:
                 self.tabs.setTabText(index, new_name)
-                self.db.save_setting(f'tab_name_{index}', new_name)
-                tab_names = [self.tabs.tabText(i) for i in range(3)]
-                self.obsidian_exporter.update_tab_names(tab_names)
+                self.db.rename_tab(self._work_tab_ids[index], new_name)
+                self.obsidian_exporter.update_tab_names(self._get_tab_names())
 
     # -- Settings dialog --
 
@@ -628,8 +830,7 @@ class LavidaApp(QMainWindow):
         dialog.exec()
 
     def configure_obsidian_export(self, path):
-        tab_names = [self.tabs.tabText(i) for i in range(3)]
-        self.obsidian_exporter.configure(path, tab_names)
+        self.obsidian_exporter.configure(path, self._get_tab_names())
 
     # -- Search --
 
@@ -725,11 +926,11 @@ class LavidaApp(QMainWindow):
         if not vid_ids:
             return
 
-        tab_names = [self.tabs.tabText(i) for i in range(3)]
+        tab_names = self._get_tab_names()
         name, ok = QInputDialog.getItem(self, "Move to Tab", "Select tab:", tab_names, 0, False)
         if ok and name:
-            tab_index = tab_names.index(name)
-            self.db.bulk_move_to_tab(vid_ids, tab_index)
+            tab_id = self._work_tab_ids[tab_names.index(name)]
+            self.db.bulk_move_to_tab(vid_ids, tab_id)
             self.toggle_select_mode()
             self.load_data()
 
@@ -759,6 +960,27 @@ class LavidaApp(QMainWindow):
         self.db.close()
         QApplication.quit()
 
+    # -- Context menu helpers --
+
+    def get_work_tabs_for_menu(self):
+        return [(tid, self.tabs.tabText(i)) for i, tid in enumerate(self._work_tab_ids)]
+
+    def move_video_to_tab(self, vid_id, list_item, target_tab_id):
+        self.db.reassign_video_tab(vid_id, target_tab_id)
+        list_widget = list_item.listWidget()
+        if list_widget:
+            list_widget.takeItem(list_widget.row(list_item))
+        title = list_item.data(Qt.ItemDataRole.UserRole + 3)
+        url = list_item.data(Qt.ItemDataRole.UserRole)
+        watched = list_item.data(Qt.ItemDataRole.UserRole + 2)
+        thumb_path = list_item.data(Qt.ItemDataRole.UserRole + 4) or ""
+        duration = list_item.data(Qt.ItemDataRole.UserRole + 5) or ""
+        channel = list_item.data(Qt.ItemDataRole.UserRole + 6) or ""
+        target_list = self._tab_id_map.get(target_tab_id, self.tab_lists[0])
+        self.create_card_item(vid_id, title, url, watched, target_list, insert_top=True,
+                              thumbnail_path=thumb_path, duration=duration, channel=channel)
+        self.check_empty_state()
+
     # -- Video CRUD --
 
     def update_video_order(self, vid_id, new_order):
@@ -768,16 +990,23 @@ class LavidaApp(QMainWindow):
         for lst in self.tab_lists:
             lst.clear()
 
-        for vid_id, title, url, watched, tab_index, thumb_path in self.db.get_active_videos():
-            target_index = tab_index if tab_index < 3 else 0
-            self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_index], thumbnail_path=thumb_path)
+        for vid_id, title, url, watched, tab_id, thumb_path, duration, channel in self.db.get_active_videos():
+            target_list = self._tab_id_map.get(tab_id)
+            if target_list is None or target_list == self.history_list:
+                target_list = self.tab_lists[0]
+            self.create_card_item(vid_id, title, url, watched, target_list,
+                                  thumbnail_path=thumb_path, duration=duration or "",
+                                  channel=channel or "")
 
-        for vid_id, title, url, watched, thumb_path in self.db.get_deleted_videos():
-            self.create_card_item(vid_id, title, url, watched, self.history_list, thumbnail_path=thumb_path)
+        for vid_id, title, url, watched, thumb_path, duration, channel in self.db.get_deleted_videos():
+            self.create_card_item(vid_id, title, url, watched, self.history_list,
+                                  thumbnail_path=thumb_path, duration=duration or "",
+                                  channel=channel or "")
 
         self.check_empty_state()
 
-    def create_card_item(self, vid_id, title, url, watched, target_list, insert_top=False, thumbnail_path=""):
+    def create_card_item(self, vid_id, title, url, watched, target_list, insert_top=False,
+                         thumbnail_path="", duration="", channel=""):
         if insert_top:
             item = QListWidgetItem()
             target_list.insertItem(0, item)
@@ -786,16 +1015,20 @@ class LavidaApp(QMainWindow):
             item = QListWidgetItem(target_list)
             row_index = target_list.count() - 1
 
-        item.setSizeHint(QSize(0, 46))
+        item.setSizeHint(QSize(0, 52))
         item.setData(Qt.ItemDataRole.UserRole, url)
         item.setData(Qt.ItemDataRole.UserRole + 1, vid_id)
         item.setData(Qt.ItemDataRole.UserRole + 2, watched)
         item.setData(Qt.ItemDataRole.UserRole + 3, title)
         item.setData(Qt.ItemDataRole.UserRole + 4, thumbnail_path or "")
+        item.setData(Qt.ItemDataRole.UserRole + 5, duration)
+        item.setData(Qt.ItemDataRole.UserRole + 6, channel)
         is_history = (target_list == self.history_list)
         card = VideoCard(vid_id, title, url, watched, self, item, is_history=is_history, row_index=row_index)
         if thumbnail_path:
             card.set_thumbnail(thumbnail_path)
+        if duration or channel:
+            card.set_metadata(duration, channel)
         target_list.setItemWidget(item, card)
 
         # Re-apply alternating styles when inserting at top
@@ -830,14 +1063,20 @@ class LavidaApp(QMainWindow):
             url = item.data(Qt.ItemDataRole.UserRole)
             watched = item.data(Qt.ItemDataRole.UserRole + 2)
             thumb_path = item.data(Qt.ItemDataRole.UserRole + 4) or ""
-            self.create_card_item(vid_id, title, url, watched, self.history_list, thumbnail_path=thumb_path)
+            duration = item.data(Qt.ItemDataRole.UserRole + 5) or ""
+            channel = item.data(Qt.ItemDataRole.UserRole + 6) or ""
+            self.create_card_item(vid_id, title, url, watched, self.history_list,
+                                  thumbnail_path=thumb_path, duration=duration, channel=channel)
 
         self.check_empty_state()
 
     def restore_video(self, vid_id, item):
-        target_tab = self.db.get_video_tab(vid_id)
-        if target_tab >= 3:
-            target_tab = 0
+        tab_id = self.db.get_video_tab(vid_id)
+        target_list = self._tab_id_map.get(tab_id)
+        if target_list is None or target_list == self.history_list:
+            target_list = self.tab_lists[0]
+            if self._work_tab_ids:
+                self.db.reassign_video_tab(vid_id, self._work_tab_ids[0])
 
         self.db.restore_video(vid_id)
 
@@ -848,7 +1087,10 @@ class LavidaApp(QMainWindow):
         url = item.data(Qt.ItemDataRole.UserRole)
         watched = item.data(Qt.ItemDataRole.UserRole + 2)
         thumb_path = item.data(Qt.ItemDataRole.UserRole + 4) or ""
-        self.create_card_item(vid_id, title, url, watched, self.tab_lists[target_tab], insert_top=True, thumbnail_path=thumb_path)
+        duration = item.data(Qt.ItemDataRole.UserRole + 5) or ""
+        channel = item.data(Qt.ItemDataRole.UserRole + 6) or ""
+        self.create_card_item(vid_id, title, url, watched, target_list, insert_top=True,
+                              thumbnail_path=thumb_path, duration=duration, channel=channel)
         self.check_empty_state()
 
     # -- Drag & drop --
@@ -869,11 +1111,22 @@ class LavidaApp(QMainWindow):
         if "youtube.com" in url or "youtu.be" in url:
             self._add_video_url(url)
 
+    @staticmethod
+    def _extract_playlist_id(url):
+        m = re.search(r'[?&]list=([a-zA-Z0-9_-]+)', url)
+        return m.group(1) if m else None
+
     def _add_video_url(self, url):
-        if self.tabs.currentIndex() == 3:
-            current_tab_index = 0
-        else:
-            current_tab_index = self.tabs.currentIndex()
+        # Check for playlist URL first
+        playlist_id = self._extract_playlist_id(url)
+        if playlist_id and '/playlist' in url:
+            self._import_playlist(url)
+            return
+
+        ui_index = self.tabs.currentIndex()
+        if ui_index >= self.work_tab_count:
+            ui_index = 0
+        tab_id = self._work_tab_ids[ui_index]
 
         existing_id = self.db.find_video_by_url(url)
         if existing_id:
@@ -882,11 +1135,49 @@ class LavidaApp(QMainWindow):
 
         new_order = self.db.get_min_row_order() - 1
 
-        last_id = self.db.add_video(url, "Loading info...", current_tab_index, new_order)
+        last_id = self.db.add_video(url, "Loading info...", tab_id, new_order)
 
-        self.create_card_item(last_id, "Loading info...", url, 0, self.tab_lists[current_tab_index], insert_top=True)
+        self.create_card_item(last_id, "Loading info...", url, 0, self._tab_id_map[tab_id], insert_top=True)
         self.check_empty_state()
-        threading.Thread(target=self.fetch_title, args=(url, last_id, current_tab_index), daemon=True).start()
+        threading.Thread(target=self.fetch_title, args=(url, last_id, tab_id), daemon=True).start()
+
+    def _import_playlist(self, url):
+        self._playlist_worker = PlaylistFetchWorker(url)
+        self._playlist_worker.video_found.connect(self._on_playlist_video_found)
+        self._playlist_worker.progress.connect(self._on_playlist_progress)
+        self._playlist_worker.finished_signal.connect(self._on_playlist_finished)
+        self._playlist_worker.error.connect(self._on_playlist_error)
+
+        self.playlist_progress.setValue(0)
+        self.playlist_progress.show()
+        self._playlist_worker.start()
+
+    def _on_playlist_video_found(self, url, title):
+        ui_index = self.tabs.currentIndex()
+        if ui_index >= self.work_tab_count:
+            ui_index = 0
+        tab_id = self._work_tab_ids[ui_index]
+
+        # Skip duplicates
+        if self.db.find_video_by_url(url):
+            return
+
+        new_order = self.db.get_min_row_order() - 1
+        last_id = self.db.add_video(url, title, tab_id, new_order)
+        self.create_card_item(last_id, title, url, 0, self._tab_id_map[tab_id], insert_top=True)
+        self.check_empty_state()
+        threading.Thread(target=self.fetch_title, args=(url, last_id, tab_id), daemon=True).start()
+
+    def _on_playlist_progress(self, current, total):
+        self.playlist_progress.setMaximum(total)
+        self.playlist_progress.setValue(current)
+
+    def _on_playlist_finished(self):
+        self.playlist_progress.hide()
+
+    def _on_playlist_error(self, msg):
+        self.playlist_progress.hide()
+        logger.warning("Playlist import error: %s", msg)
 
     # -- Add from browser --
 
@@ -950,17 +1241,51 @@ class LavidaApp(QMainWindow):
                 return match.group(1)
         return None
 
-    def fetch_title(self, url, vid_id, tab_index):
+    @staticmethod
+    def _parse_iso_duration(iso):
+        """Parse ISO 8601 duration like 'PT1H2M34S' → '1:02:34'."""
+        match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', iso or '')
+        if not match:
+            return ""
+        h, m, s = (int(x) if x else 0 for x in match.groups())
+        if h:
+            return f"{h}:{m:02d}:{s:02d}"
+        return f"{m}:{s:02d}"
+
+    def fetch_title(self, url, vid_id, tab_id):
         title = url
         thumb_path = ""
+        duration = ""
+        channel = ""
+        page_text = ""
         try:
             headers = {'User-Agent': 'Mozilla/5.0'}
             response = requests.get(url, headers=headers, timeout=5)
-            soup = BeautifulSoup(response.text, 'html.parser')
+            page_text = response.text
+            soup = BeautifulSoup(page_text, 'html.parser')
             if soup.title:
                 title = soup.title.string.replace("- YouTube", "").strip()
+
+            # Extract duration from JSON-LD
+            for script in soup.find_all('script', type='application/ld+json'):
+                try:
+                    data = json.loads(script.string)
+                    if isinstance(data, dict) and 'duration' in data:
+                        duration = self._parse_iso_duration(data['duration'])
+                        break
+                except (json.JSONDecodeError, TypeError):
+                    pass
         except Exception:
             logger.warning("Failed to fetch title for %s", url, exc_info=True)
+
+        # Fetch channel name via oEmbed
+        try:
+            oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
+            resp = requests.get(oembed_url, timeout=5)
+            if resp.status_code == 200:
+                channel = resp.json().get('author_name', '')
+        except Exception:
+            logger.warning("Failed to fetch channel for %s", url, exc_info=True)
 
         try:
             video_id = self.extract_video_id(url)
@@ -974,12 +1299,12 @@ class LavidaApp(QMainWindow):
         except Exception:
             logger.warning("Failed to fetch thumbnail for %s", url, exc_info=True)
 
-        self.update_title_signal.emit(title, thumb_path, vid_id, tab_index)
+        self.update_title_signal.emit(title, thumb_path, vid_id, tab_id, duration, channel)
 
-    def update_item_title(self, title, thumb_path, vid_id, tab_index):
-        self.db.update_video_title(vid_id, title, thumb_path)
+    def update_item_title(self, title, thumb_path, vid_id, tab_id, duration, channel):
+        self.db.update_video_title(vid_id, title, thumb_path, duration, channel)
 
-        target_list = self.tab_lists[tab_index] if tab_index < 3 else self.history_list
+        target_list = self._tab_id_map.get(tab_id, self.tab_lists[0])
 
         for i in range(target_list.count()):
             item = target_list.item(i)
@@ -987,7 +1312,10 @@ class LavidaApp(QMainWindow):
             if widget and widget.vid_id == vid_id:
                 item.setData(Qt.ItemDataRole.UserRole + 3, title)
                 item.setData(Qt.ItemDataRole.UserRole + 4, thumb_path)
+                item.setData(Qt.ItemDataRole.UserRole + 5, duration)
+                item.setData(Qt.ItemDataRole.UserRole + 6, channel)
                 widget.title_lbl.setText(title)
+                widget.set_metadata(duration, channel)
                 if thumb_path:
                     widget.set_thumbnail(thumb_path)
                 break

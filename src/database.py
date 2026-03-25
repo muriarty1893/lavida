@@ -42,6 +42,9 @@ class Database(QObject):
             "ALTER TABLE videos ADD COLUMN row_order INTEGER DEFAULT 0",
             "ALTER TABLE videos ADD COLUMN is_deleted INTEGER DEFAULT 0",
             "ALTER TABLE videos ADD COLUMN thumbnail_path TEXT DEFAULT ''",
+            "ALTER TABLE videos ADD COLUMN tab_id INTEGER",
+            "ALTER TABLE videos ADD COLUMN duration TEXT DEFAULT ''",
+            "ALTER TABLE videos ADD COLUMN channel TEXT DEFAULT ''",
         ]
         for sql in migrations:
             try:
@@ -50,6 +53,55 @@ class Database(QObject):
                 pass  # Column already exists
 
         self.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+
+        # Create tabs table and migrate existing data if needed
+        self.cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tabs'")
+        if not self.cursor.fetchone():
+            self.cursor.execute("""
+                CREATE TABLE tabs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    is_history INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            # Seed work tabs from existing settings (or defaults)
+            for i in range(3):
+                self.cursor.execute("SELECT value FROM settings WHERE key=?", (f'tab_name_{i}',))
+                row = self.cursor.fetchone()
+                name = row[0] if row else f"Tab {i + 1}"
+                self.cursor.execute(
+                    "INSERT INTO tabs (name, sort_order, is_history) VALUES (?, ?, 0)",
+                    (name, i)
+                )
+            # History tab
+            self.cursor.execute(
+                "INSERT INTO tabs (name, sort_order, is_history) VALUES ('History', 999999, 1)"
+            )
+            # Map old tab_index → new tab_id for all videos
+            self.cursor.execute(
+                "SELECT id, sort_order FROM tabs WHERE is_history=0 ORDER BY sort_order"
+            )
+            tab_mapping = {row[1]: row[0] for row in self.cursor.fetchall()}
+            self.cursor.execute("SELECT id FROM tabs WHERE is_history=1")
+            history_id = self.cursor.fetchone()[0]
+            first_tab_id = tab_mapping.get(0) or next(iter(tab_mapping.values()))
+            for old_index, new_id in tab_mapping.items():
+                self.cursor.execute(
+                    "UPDATE videos SET tab_id=? WHERE tab_index=? AND is_deleted=0",
+                    (new_id, old_index)
+                )
+            # Any remaining unmapped active videos go to the first tab
+            self.cursor.execute(
+                "UPDATE videos SET tab_id=? WHERE tab_id IS NULL AND is_deleted=0",
+                (first_tab_id,)
+            )
+            # Deleted videos get the history tab_id
+            self.cursor.execute(
+                "UPDATE videos SET tab_id=? WHERE is_deleted=1",
+                (history_id,)
+            )
+
         self.conn.commit()
 
     # -- Settings --
@@ -87,20 +139,76 @@ class Database(QObject):
             logger.warning("Failed to load window settings", exc_info=True)
             return None
 
+    # -- Tabs --
+
+    def get_work_tabs(self):
+        """Return all non-history tabs ordered by sort_order: [(id, name, sort_order), ...]"""
+        self.cursor.execute(
+            "SELECT id, name, sort_order FROM tabs WHERE is_history=0 ORDER BY sort_order ASC"
+        )
+        return self.cursor.fetchall()
+
+    def get_history_tab_id(self):
+        self.cursor.execute("SELECT id FROM tabs WHERE is_history=1")
+        row = self.cursor.fetchone()
+        return row[0] if row else None
+
+    def update_tab_sort_orders(self, tab_ids):
+        """Persist new tab display order."""
+        for i, tab_id in enumerate(tab_ids):
+            self.cursor.execute("UPDATE tabs SET sort_order=? WHERE id=?", (i, tab_id))
+        self.conn.commit()
+
+    def create_tab(self, name, sort_order):
+        self.cursor.execute(
+            "INSERT INTO tabs (name, sort_order, is_history) VALUES (?, ?, 0)",
+            (name, sort_order)
+        )
+        self.conn.commit()
+        return self.cursor.lastrowid
+
+    def delete_tab(self, tab_id):
+        """Soft-delete all videos in the tab, then remove the tab row."""
+        self.cursor.execute(
+            "UPDATE videos SET is_deleted=1 WHERE tab_id=? AND is_deleted=0", (tab_id,)
+        )
+        self.cursor.execute("DELETE FROM tabs WHERE id=?", (tab_id,))
+        self.conn.commit()
+        self.data_changed.emit()
+
+    def rename_tab(self, tab_id, new_name):
+        self.cursor.execute("UPDATE tabs SET name=? WHERE id=?", (new_name, tab_id))
+        self.conn.commit()
+
+    def get_work_tab_count(self):
+        self.cursor.execute("SELECT COUNT(*) FROM tabs WHERE is_history=0")
+        return self.cursor.fetchone()[0]
+
+    def get_next_sort_order(self):
+        self.cursor.execute("SELECT MAX(sort_order) FROM tabs WHERE is_history=0")
+        val = self.cursor.fetchone()[0]
+        return (val + 1) if val is not None else 0
+
+    def reassign_video_tab(self, vid_id, tab_id):
+        self.cursor.execute("UPDATE videos SET tab_id=? WHERE id=?", (tab_id, vid_id))
+        self.conn.commit()
+
     # -- Videos --
 
-    def add_video(self, url, title, tab_index, row_order):
+    def add_video(self, url, title, tab_id, row_order):
         self.cursor.execute(
-            "INSERT INTO videos (url, title, tab_index, row_order, is_deleted) VALUES (?, ?, ?, ?, 0)",
-            (url, title, tab_index, row_order)
+            "INSERT INTO videos (url, title, tab_id, row_order, is_deleted) VALUES (?, ?, ?, ?, 0)",
+            (url, title, tab_id, row_order)
         )
         self.conn.commit()
         self.data_changed.emit()
         return self.cursor.lastrowid
 
-    def update_video_title(self, vid_id, title, thumbnail_path=""):
-        self.cursor.execute("UPDATE videos SET title = ?, thumbnail_path = ? WHERE id = ?",
-                            (title, thumbnail_path, vid_id))
+    def update_video_title(self, vid_id, title, thumbnail_path="", duration="", channel=""):
+        self.cursor.execute(
+            "UPDATE videos SET title=?, thumbnail_path=?, duration=?, channel=? WHERE id=?",
+            (title, thumbnail_path, duration, channel, vid_id)
+        )
         self.conn.commit()
         self.data_changed.emit()
 
@@ -135,20 +243,20 @@ class Database(QObject):
         self.data_changed.emit()
 
     def get_video_tab(self, vid_id):
-        self.cursor.execute("SELECT tab_index FROM videos WHERE id = ?", (vid_id,))
+        self.cursor.execute("SELECT tab_id FROM videos WHERE id = ?", (vid_id,))
         row = self.cursor.fetchone()
-        return row[0] if row else 0
+        return row[0] if row else None
 
     def get_active_videos(self):
         self.cursor.execute(
-            "SELECT id, title, url, watched, tab_index, thumbnail_path "
+            "SELECT id, title, url, watched, tab_id, thumbnail_path, duration, channel "
             "FROM videos WHERE is_deleted=0 ORDER BY row_order ASC, id DESC"
         )
         return self.cursor.fetchall()
 
     def get_deleted_videos(self):
         self.cursor.execute(
-            "SELECT id, title, url, watched, thumbnail_path "
+            "SELECT id, title, url, watched, thumbnail_path, duration, channel "
             "FROM videos WHERE is_deleted=1 ORDER BY id DESC"
         )
         return self.cursor.fetchall()
@@ -193,11 +301,13 @@ class Database(QObject):
         self.conn.commit()
         self.data_changed.emit()
 
-    def bulk_move_to_tab(self, vid_ids, tab_index):
+    def bulk_move_to_tab(self, vid_ids, tab_id):
         if not vid_ids:
             return
         placeholders = ','.join('?' * len(vid_ids))
-        self.cursor.execute(f"UPDATE videos SET tab_index=? WHERE id IN ({placeholders})", [tab_index] + vid_ids)
+        self.cursor.execute(
+            f"UPDATE videos SET tab_id=? WHERE id IN ({placeholders})", [tab_id] + vid_ids
+        )
         self.conn.commit()
         self.data_changed.emit()
 

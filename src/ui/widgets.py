@@ -1,8 +1,8 @@
 import os
 import webbrowser
-from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout, QFrame,
+from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QFrame,
                              QListWidget, QAbstractItemView, QListWidgetItem, QCheckBox,
-                             QLayout, QSizePolicy)
+                             QLayout, QSizePolicy, QMenu, QApplication)
 from PyQt6.QtCore import Qt, QSize, QRectF, QTimer, QPoint, QRect
 from PyQt6.QtGui import QColor, QCursor, QPainter, QBrush, QPixmap
 
@@ -190,6 +190,14 @@ class VideoCard(QFrame):
         self.drag_handle = DragHandle()
         self.layout.addWidget(self.drag_handle)
 
+        # Thumbnail container (for duration badge overlay)
+        self._thumb_container = QWidget()
+        self._thumb_container.setFixedSize(64, 36)
+        self._thumb_container.setStyleSheet("background: transparent;")
+        thumb_container_layout = QHBoxLayout(self._thumb_container)
+        thumb_container_layout.setContentsMargins(0, 0, 0, 0)
+        thumb_container_layout.setSpacing(0)
+
         self.thumb_lbl = QLabel()
         self.thumb_lbl.setFixedSize(64, 36)
         self.thumb_lbl.setStyleSheet(f"""
@@ -197,7 +205,26 @@ class VideoCard(QFrame):
             border-radius: 6px;
         """)
         self.thumb_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.layout.addWidget(self.thumb_lbl)
+        thumb_container_layout.addWidget(self.thumb_lbl)
+
+        self.duration_lbl = QLabel()
+        self.duration_lbl.setStyleSheet(f"""
+            background: rgba(0, 0, 0, 0.75);
+            color: #ffffff;
+            font-size: 8px;
+            font-weight: 600;
+            border-radius: 3px;
+            padding: 1px 3px;
+        """)
+        self.duration_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.duration_lbl.hide()
+
+        self.layout.addWidget(self._thumb_container)
+
+        # Title + channel vertical layout
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(1)
 
         self.title_lbl = QLabel(title)
         self.title_lbl.setStyleSheet(f"""
@@ -206,7 +233,17 @@ class VideoCard(QFrame):
             font-weight: 500;
         """)
         if watched: self.set_watched_style()
-        self.layout.addWidget(self.title_lbl, stretch=1)
+        text_layout.addWidget(self.title_lbl)
+
+        self.channel_lbl = QLabel()
+        self.channel_lbl.setStyleSheet(f"""
+            color: {theme.CLR_TEXT_DIM};
+            font-size: 10px;
+        """)
+        self.channel_lbl.hide()
+        text_layout.addWidget(self.channel_lbl)
+
+        self.layout.addLayout(text_layout, stretch=1)
 
         if is_history:
             self.restore_btn = QPushButton("Restore")
@@ -325,10 +362,90 @@ class VideoCard(QFrame):
                     self.parent_window.mark_as_watched(self.vid_id, self)
                     self.parent_window.hide()
         elif event.button() == Qt.MouseButton.RightButton:
-            self.parent_window.mark_as_unwatched(self.vid_id, self)
+            self._show_context_menu(event.globalPosition().toPoint())
         elif event.button() == Qt.MouseButton.MiddleButton:
             self.delete_clicked()
         super().mousePressEvent(event)
+
+    def _show_context_menu(self, global_pos):
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background: {theme.CLR_SURFACE};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 6px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                color: {theme.CLR_TEXT};
+                padding: 6px 24px 6px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+            }}
+            QMenu::item:selected {{
+                background: {theme.accent_rgba(0.15)};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {theme.CLR_BORDER};
+                margin: 4px 8px;
+            }}
+        """)
+
+        if self.url:
+            menu.addAction("Open in Browser", lambda: (
+                webbrowser.open(self.url),
+                self.parent_window.mark_as_watched(self.vid_id, self),
+                self.parent_window.hide(),
+            ))
+            menu.addAction("Copy URL", lambda: QApplication.clipboard().setText(self.url))
+
+        menu.addSeparator()
+
+        if self.watched:
+            menu.addAction("Mark Unwatched",
+                           lambda: self.parent_window.mark_as_unwatched(self.vid_id, self))
+        else:
+            menu.addAction("Mark Watched",
+                           lambda: self.parent_window.mark_as_watched(self.vid_id, self))
+
+        if not self.is_history:
+            tabs = self.parent_window.get_work_tabs_for_menu()
+            current_tab_id = self.list_item.listWidget().tab_id if self.list_item.listWidget() else None
+            if len(tabs) > 1:
+                move_menu = menu.addMenu("Move to Tab")
+                move_menu.setStyleSheet(menu.styleSheet())
+                for tab_id, name in tabs:
+                    if tab_id == current_tab_id:
+                        continue
+                    move_menu.addAction(name,
+                                        lambda tid=tab_id: self.parent_window.move_video_to_tab(
+                                            self.vid_id, self.list_item, tid))
+
+        menu.addSeparator()
+
+        if self.is_history:
+            menu.addAction("Restore", self.restore_clicked)
+            menu.addAction("Delete Permanently", self.delete_clicked)
+        else:
+            menu.addAction("Delete", self.delete_clicked)
+
+        menu.exec(global_pos)
+
+    def set_metadata(self, duration, channel):
+        if duration:
+            self.duration_lbl.setText(duration)
+            self.duration_lbl.adjustSize()
+            self.duration_lbl.setParent(self._thumb_container)
+            self.duration_lbl.move(
+                self._thumb_container.width() - self.duration_lbl.width() - 2,
+                self._thumb_container.height() - self.duration_lbl.height() - 2
+            )
+            self.duration_lbl.raise_()
+            self.duration_lbl.show()
+        if channel:
+            self.channel_lbl.setText(channel)
+            self.channel_lbl.show()
 
     def set_thumbnail(self, path):
         if path and os.path.exists(path):
@@ -373,10 +490,10 @@ class VideoCard(QFrame):
         preview.show_at(pixmap, QPoint(popup_x, popup_y))
 
 class DraggableListWidget(QListWidget):
-    def __init__(self, parent_window, tab_index):
+    def __init__(self, parent_window, tab_id):
         super().__init__()
         self.parent_window = parent_window
-        self.tab_index = tab_index
+        self.tab_id = tab_id
 
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
@@ -437,12 +554,16 @@ class DraggableListWidget(QListWidget):
                 watched = item.data(Qt.ItemDataRole.UserRole + 2)
                 title = item.data(Qt.ItemDataRole.UserRole + 3)
                 thumb_path = item.data(Qt.ItemDataRole.UserRole + 4)
+                duration = item.data(Qt.ItemDataRole.UserRole + 5) or ""
+                channel = item.data(Qt.ItemDataRole.UserRole + 6) or ""
                 if title is None: title = "Loading..."
 
                 card = VideoCard(vid_id, title, url, watched, self.parent_window, item, row_index=i)
                 if thumb_path:
                     card.set_thumbnail(thumb_path)
-                item.setSizeHint(QSize(0, 46))
+                if duration or channel:
+                    card.set_metadata(duration, channel)
+                item.setSizeHint(QSize(0, 52))
                 self.setItemWidget(item, card)
             else:
                 self.itemWidget(item).apply_row_style(i)
