@@ -256,19 +256,39 @@ class LavidaApp(QMainWindow):
     def _btn_style(self):
         return f"""
             QPushButton {{
-                background: transparent;
+                background: {theme.CLR_ELEVATED};
                 color: {theme.CLR_TEXT_DIM};
-                border: 1px solid transparent;
-                border-radius: 6px;
-                font-size: 11px;
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 8px;
+                font-size: 13px;
                 font-weight: 600;
-                letter-spacing: 0.3px;
-                padding: 5px 8px;
+                min-height: 34px;
+                padding: 0px 12px;
             }}
             QPushButton:hover {{
                 color: {theme.CLR_TEXT};
-                background: rgba(255, 255, 255, 0.06);
-                border: 1px solid rgba(255, 255, 255, 0.05);
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid {theme.CLR_BORDER_HOVER};
+            }}
+        """
+
+    def _icon_btn_style(self):
+        return f"""
+            QPushButton {{
+                background: {theme.CLR_ELEVATED};
+                color: {theme.CLR_TEXT_DIM};
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 8px;
+                font-size: 15px;
+                min-height: 34px;
+                min-width: 34px;
+                max-width: 34px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                color: {theme.CLR_TEXT};
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid {theme.CLR_BORDER_HOVER};
             }}
         """
 
@@ -292,8 +312,8 @@ class LavidaApp(QMainWindow):
 
         # -- Top bar --
         top_bar = QHBoxLayout()
-        top_bar.setSpacing(4)
-        top_bar.setContentsMargins(4, 0, 4, 0)
+        top_bar.setSpacing(6)
+        top_bar.setContentsMargins(4, 6, 4, 6)
 
         self.add_btn = QPushButton("+ Add")
         self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -317,13 +337,15 @@ class LavidaApp(QMainWindow):
         self.settings_btn.clicked.connect(self._open_settings)
         top_bar.addWidget(self.settings_btn)
 
-        self.hide_btn = QPushButton("Hide")
+        self.hide_btn = QPushButton("–")
         self.hide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hide_btn.setToolTip("Hide")
         self.hide_btn.clicked.connect(self.hide)
         top_bar.addWidget(self.hide_btn)
 
-        self.quit_btn = QPushButton("Quit")
+        self.quit_btn = QPushButton("✕")
         self.quit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.quit_btn.setToolTip("Quit")
         self.quit_btn.clicked.connect(self.close_application)
         top_bar.addWidget(self.quit_btn)
 
@@ -467,42 +489,45 @@ class LavidaApp(QMainWindow):
 
         self.add_btn.setStyleSheet(f"""
             QPushButton {{
-                background: {theme.CLR_ACCENT_SUBTLE};
-                color: {theme.CLR_ACCENT};
-                border: 1px solid {theme.accent_rgba(0.20)};
-                border-radius: 6px;
-                font-size: 11px;
+                background: {theme.CLR_ACCENT};
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                font-size: 13px;
                 font-weight: 700;
-                padding: 5px 14px;
+                min-height: 34px;
+                padding: 0px 18px;
             }}
             QPushButton:hover {{
-                background: {theme.accent_rgba(0.22)};
-                color: {theme.CLR_ACCENT_HOVER};
-                border: 1px solid {theme.accent_rgba(0.35)};
+                background: {theme.CLR_ACCENT_HOVER};
             }}
         """)
 
         btn_style = self._btn_style()
         self.search_btn.setStyleSheet(btn_style)
         self.select_btn.setStyleSheet(btn_style)
-        self.settings_btn.setStyleSheet(btn_style)
-        self.hide_btn.setStyleSheet(btn_style)
+
+        icon_btn_style = self._icon_btn_style()
+        self.settings_btn.setStyleSheet(icon_btn_style)
+
+        self.hide_btn.setStyleSheet(icon_btn_style)
 
         self.quit_btn.setStyleSheet(f"""
             QPushButton {{
-                background: transparent;
+                background: {theme.CLR_ELEVATED};
                 color: {theme.CLR_TEXT_DIM};
-                border: 1px solid transparent;
-                border-radius: 6px;
-                font-size: 11px;
-                font-weight: 600;
-                letter-spacing: 0.3px;
-                padding: 5px 12px;
+                border: 1px solid {theme.CLR_BORDER};
+                border-radius: 8px;
+                font-size: 15px;
+                min-height: 34px;
+                min-width: 34px;
+                max-width: 34px;
+                padding: 0px;
             }}
             QPushButton:hover {{
                 color: #e05252;
-                background: rgba(224, 82, 82, 0.10);
-                border: 1px solid rgba(224, 82, 82, 0.15);
+                background: rgba(224, 82, 82, 0.12);
+                border: 1px solid rgba(224, 82, 82, 0.20);
             }}
         """)
 
@@ -541,11 +566,11 @@ class LavidaApp(QMainWindow):
             QTabBar::tab {{
                 background: transparent;
                 color: {theme.CLR_TEXT_MUTED};
-                padding: 7px 6px;
+                padding: 10px 6px;
                 min-width: 48px;
                 margin: 6px 3px 0px 3px;
                 font-weight: 600;
-                font-size: 11px;
+                font-size: 13px;
                 letter-spacing: 0.3px;
                 border: none;
                 border-bottom: 2px solid transparent;
@@ -563,8 +588,8 @@ class LavidaApp(QMainWindow):
             QTabBar::tab:last {{
                 color: {theme.CLR_TEXT_MUTED};
                 min-width: 20px;
-                padding: 7px 10px;
-                font-size: 16px;
+                padding: 10px 10px;
+                font-size: 18px;
                 font-weight: 400;
                 letter-spacing: 0px;
                 border-bottom: none;
