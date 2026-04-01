@@ -179,8 +179,8 @@ class VideoCard(QFrame):
         self.apply_row_style(row_index)
 
         self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(6, 4, 6, 4)
-        self.layout.setSpacing(8)
+        self.layout.setContentsMargins(6, 2, 6, 2)
+        self.layout.setSpacing(6)
 
         self.checkbox = QCheckBox()
         self.checkbox.setStyleSheet("QCheckBox { margin-left: 4px; }")
@@ -192,14 +192,14 @@ class VideoCard(QFrame):
 
         # Thumbnail container (for duration badge overlay)
         self._thumb_container = QWidget()
-        self._thumb_container.setFixedSize(64, 36)
+        self._thumb_container.setFixedSize(54, 30)
         self._thumb_container.setStyleSheet("background: transparent;")
         thumb_container_layout = QHBoxLayout(self._thumb_container)
         thumb_container_layout.setContentsMargins(0, 0, 0, 0)
         thumb_container_layout.setSpacing(0)
 
         self.thumb_lbl = QLabel()
-        self.thumb_lbl.setFixedSize(64, 36)
+        self.thumb_lbl.setFixedSize(54, 30)
         self.thumb_lbl.setStyleSheet(f"""
             background: {theme.CLR_BASE};
             border-radius: 6px;
@@ -453,7 +453,7 @@ class VideoCard(QFrame):
             if not pixmap.isNull():
                 self._thumb_path = path
                 self.thumb_lbl.setPixmap(
-                    pixmap.scaled(64, 36, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    pixmap.scaled(54, 30, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                   Qt.TransformationMode.SmoothTransformation)
                 )
                 self.thumb_lbl.setStyleSheet("border-radius: 6px;")
@@ -563,7 +563,7 @@ class DraggableListWidget(QListWidget):
                     card.set_thumbnail(thumb_path)
                 if duration or channel:
                     card.set_metadata(duration, channel)
-                item.setSizeHint(QSize(0, 52))
+                item.setSizeHint(QSize(0, 40))
                 self.setItemWidget(item, card)
             else:
                 self.itemWidget(item).apply_row_style(i)

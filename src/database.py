@@ -274,6 +274,14 @@ class Database(QObject):
         row = self.cursor.fetchone()
         return row[0] if row else None
 
+    def find_video_by_video_id(self, video_id):
+        self.cursor.execute(
+            "SELECT id FROM videos WHERE url LIKE ? AND is_deleted = 0",
+            (f"%{video_id}%",)
+        )
+        row = self.cursor.fetchone()
+        return row[0] if row else None
+
     def get_video_by_url(self, url):
         """Return (id, watched) for an active video by URL, or None."""
         self.cursor.execute(

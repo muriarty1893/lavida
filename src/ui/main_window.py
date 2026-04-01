@@ -1015,7 +1015,7 @@ class LavidaApp(QMainWindow):
             item = QListWidgetItem(target_list)
             row_index = target_list.count() - 1
 
-        item.setSizeHint(QSize(0, 52))
+        item.setSizeHint(QSize(0, 40))
         item.setData(Qt.ItemDataRole.UserRole, url)
         item.setData(Qt.ItemDataRole.UserRole + 1, vid_id)
         item.setData(Qt.ItemDataRole.UserRole + 2, watched)
@@ -1129,7 +1129,9 @@ class LavidaApp(QMainWindow):
             ui_index = 0
         tab_id = self._work_tab_ids[ui_index]
 
-        existing_id = self.db.find_video_by_url(url)
+        vid_id = self.extract_video_id(url)
+        existing_id = (self.db.find_video_by_video_id(vid_id) if vid_id
+                       else self.db.find_video_by_url(url))
         if existing_id:
             self.db.hard_delete_video(existing_id)
             self.load_data()
@@ -1159,8 +1161,9 @@ class LavidaApp(QMainWindow):
             ui_index = 0
         tab_id = self._work_tab_ids[ui_index]
 
-        # Skip duplicates
-        if self.db.find_video_by_url(url):
+        # Skip duplicates (match by video ID to catch URL variants)
+        vid_id = self.extract_video_id(url)
+        if (vid_id and self.db.find_video_by_video_id(vid_id)) or self.db.find_video_by_url(url):
             return
 
         new_order = self.db.get_min_row_order() - 1
