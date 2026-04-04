@@ -189,6 +189,10 @@ class PlaylistFetchWorker(QThread):
     def __init__(self, playlist_url):
         super().__init__()
         self.playlist_url = playlist_url
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
 
     def run(self):
         try:
@@ -240,6 +244,8 @@ class PlaylistFetchWorker(QThread):
 
             total = len(videos)
             for i, (url, title) in enumerate(videos):
+                if self._cancelled:
+                    break
                 self.video_found.emit(url, title)
                 self.progress.emit(i + 1, total)
 

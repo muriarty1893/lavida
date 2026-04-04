@@ -4,7 +4,7 @@ import json
 import logging
 import subprocess
 import requests
-import threading
+from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QTabWidget, QTabBar,
@@ -135,6 +135,8 @@ class LavidaApp(QMainWindow):
         self.listener = GlobalInputListener(activation_key)
         self.listener.toggle_signal.connect(self.toggle_visibility)
         self.listener.start()
+
+        self._executor = ThreadPoolExecutor(max_workers=3)
 
         self.resize_margin = 10
         self.current_edge = None
@@ -841,7 +843,7 @@ class LavidaApp(QMainWindow):
         """)
 
         if dialog.exec():
-            new_name = dialog.textValue().strip()
+            new_name = re.sub(r'[/\\:*?"<>|]', '', dialog.textValue()).strip()
             if new_name:
                 self.tabs.setTabText(index, new_name)
                 self.db.rename_tab(self._work_tab_ids[index], new_name)
@@ -982,6 +984,13 @@ class LavidaApp(QMainWindow):
         self._fullscreen_timer.stop()
         self._save_window_position()
         self.obsidian_exporter.shutdown()
+        if hasattr(self, '_playlist_worker') and self._playlist_worker and self._playlist_worker.isRunning():
+            self._playlist_worker.cancel()
+            self._playlist_worker.quit()
+            self._playlist_worker.wait(2000)
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        self.listener.quit()
+        self.listener.wait(2000)
         self.db.close()
         QApplication.quit()
 
@@ -1167,7 +1176,7 @@ class LavidaApp(QMainWindow):
 
         self.create_card_item(last_id, "Loading info...", url, 0, self._tab_id_map[tab_id], insert_top=True)
         self.check_empty_state()
-        threading.Thread(target=self.fetch_title, args=(url, last_id, tab_id), daemon=True).start()
+        self._executor.submit(self.fetch_title, url, last_id, tab_id)
 
     def _import_playlist(self, url):
         self._playlist_worker = PlaylistFetchWorker(url)
@@ -1195,7 +1204,7 @@ class LavidaApp(QMainWindow):
         last_id = self.db.add_video(url, title, tab_id, new_order)
         self.create_card_item(last_id, title, url, 0, self._tab_id_map[tab_id], insert_top=True)
         self.check_empty_state()
-        threading.Thread(target=self.fetch_title, args=(url, last_id, tab_id), daemon=True).start()
+        self._executor.submit(self.fetch_title, url, last_id, tab_id)
 
     def _on_playlist_progress(self, current, total):
         self.playlist_progress.setMaximum(total)

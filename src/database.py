@@ -1,12 +1,27 @@
 """Centralized database operations for Lavida."""
 
 import os
+import re
 import sqlite3
 import logging
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 logger = logging.getLogger(__name__)
+
+_YT_ID_PATTERNS = [
+    r'(?:v=|/v/)([a-zA-Z0-9_-]{11})',
+    r'youtu\.be/([a-zA-Z0-9_-]{11})',
+    r'(?:embed|shorts)/([a-zA-Z0-9_-]{11})',
+]
+
+
+def _extract_video_id(url):
+    for pattern in _YT_ID_PATTERNS:
+        m = re.search(pattern, url or '')
+        if m:
+            return m.group(1)
+    return ''
 
 
 class Database(QObject):
@@ -18,11 +33,14 @@ class Database(QObject):
             db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lavida.db")
         self.db_path = os.path.abspath(db_path)
         self.conn = sqlite3.connect(self.db_path)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA foreign_keys=ON")
         self.cursor = self.conn.cursor()
         self._init_tables()
 
         self.thumbnails_dir = os.path.join(os.path.dirname(self.db_path), "thumbnails")
         os.makedirs(self.thumbnails_dir, exist_ok=True)
+        self.cleanup_thumbnails()
 
     def _init_tables(self):
         self.cursor.execute("""
@@ -46,12 +64,22 @@ class Database(QObject):
             "ALTER TABLE videos ADD COLUMN duration TEXT DEFAULT ''",
             "ALTER TABLE videos ADD COLUMN channel TEXT DEFAULT ''",
             "ALTER TABLE videos ADD COLUMN deleted_at TEXT DEFAULT ''",
+            "ALTER TABLE videos ADD COLUMN video_id TEXT DEFAULT ''",
         ]
         for sql in migrations:
             try:
                 self.cursor.execute(sql)
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            except sqlite3.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    logger.warning("Migration warning: %s — %s", sql, e)
+
+        # Backfill video_id for any rows that don't have it yet
+        self.cursor.execute("SELECT id, url FROM videos WHERE video_id = '' OR video_id IS NULL")
+        rows = self.cursor.fetchall()
+        for vid_id, url in rows:
+            extracted = _extract_video_id(url)
+            if extracted:
+                self.cursor.execute("UPDATE videos SET video_id=? WHERE id=?", (extracted, vid_id))
 
         self.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 
@@ -103,7 +131,32 @@ class Database(QObject):
                 (history_id,)
             )
 
+        # Indexes
+        indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_videos_active ON videos(is_deleted, row_order, id)",
+            "CREATE INDEX IF NOT EXISTS idx_videos_deleted ON videos(is_deleted, deleted_at)",
+            "CREATE INDEX IF NOT EXISTS idx_videos_tab ON videos(tab_id)",
+            "CREATE INDEX IF NOT EXISTS idx_videos_video_id ON videos(video_id)",
+        ]
+        for sql in indexes:
+            self.cursor.execute(sql)
+
         self.conn.commit()
+
+    def cleanup_thumbnails(self):
+        """Delete thumbnail files not referenced by any video."""
+        try:
+            self.cursor.execute("SELECT thumbnail_path FROM videos WHERE thumbnail_path != ''")
+            valid = {row[0] for row in self.cursor.fetchall()}
+            for fname in os.listdir(self.thumbnails_dir):
+                path = os.path.join(self.thumbnails_dir, fname)
+                if path not in valid:
+                    try:
+                        os.remove(path)
+                    except OSError as e:
+                        logger.warning("Could not remove orphaned thumbnail %s: %s", path, e)
+        except Exception:
+            logger.warning("Thumbnail cleanup failed", exc_info=True)
 
     # -- Settings --
 
@@ -169,12 +222,13 @@ class Database(QObject):
         return self.cursor.lastrowid
 
     def delete_tab(self, tab_id):
-        """Soft-delete all videos in the tab, then remove the tab row."""
-        self.cursor.execute(
-            "UPDATE videos SET is_deleted=1, deleted_at=datetime('now') WHERE tab_id=? AND is_deleted=0", (tab_id,)
-        )
-        self.cursor.execute("DELETE FROM tabs WHERE id=?", (tab_id,))
-        self.conn.commit()
+        """Soft-delete all videos in the tab, then remove the tab row (atomic)."""
+        with self.conn:
+            self.conn.execute(
+                "UPDATE videos SET is_deleted=1, deleted_at=datetime('now') WHERE tab_id=? AND is_deleted=0",
+                (tab_id,)
+            )
+            self.conn.execute("DELETE FROM tabs WHERE id=?", (tab_id,))
         self.data_changed.emit()
 
     def rename_tab(self, tab_id, new_name):
@@ -197,9 +251,10 @@ class Database(QObject):
     # -- Videos --
 
     def add_video(self, url, title, tab_id, row_order):
+        vid_id = _extract_video_id(url)
         self.cursor.execute(
-            "INSERT INTO videos (url, title, tab_id, row_order, is_deleted) VALUES (?, ?, ?, ?, 0)",
-            (url, title, tab_id, row_order)
+            "INSERT INTO videos (url, title, tab_id, row_order, is_deleted, video_id) VALUES (?, ?, ?, ?, 0, ?)",
+            (url, title, tab_id, row_order, vid_id)
         )
         self.conn.commit()
         self.data_changed.emit()
@@ -275,9 +330,10 @@ class Database(QObject):
         return row[0] if row else None
 
     def find_video_by_video_id(self, video_id):
+        """Find active video by exact video_id match."""
         self.cursor.execute(
-            "SELECT id FROM videos WHERE url LIKE ? AND is_deleted = 0",
-            (f"%{video_id}%",)
+            "SELECT id FROM videos WHERE video_id = ? AND is_deleted = 0",
+            (video_id,)
         )
         row = self.cursor.fetchone()
         return row[0] if row else None
