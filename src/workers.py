@@ -7,6 +7,10 @@ import requests
 from pynput import mouse, keyboard
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from src.net import is_safe_youtube_url, fetch_bounded
+
+_PLAYLIST_MAX_BYTES = 8 * 1024 * 1024  # 8 MiB
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_ACTIVATION_KEY = 'scroll_right'
@@ -196,14 +200,18 @@ class PlaylistFetchWorker(QThread):
 
     def run(self):
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            resp = requests.get(self.playlist_url, headers=headers, timeout=10)
-            if resp.status_code != 200:
-                self.error.emit(f"HTTP {resp.status_code}")
+            if not is_safe_youtube_url(self.playlist_url):
+                self.error.emit("Invalid playlist URL")
                 return
 
+            raw = fetch_bounded(self.playlist_url, _PLAYLIST_MAX_BYTES, timeout=10)
+            if raw is None:
+                self.error.emit("Failed to fetch playlist")
+                return
+
+            page_text = raw.decode("utf-8", errors="replace")
             # Extract ytInitialData JSON from page
-            match = re.search(r'var ytInitialData\s*=\s*(\{.+?\});\s*</script>', resp.text)
+            match = re.search(r'var ytInitialData\s*=\s*(\{.+?\});\s*</script>', page_text)
             if not match:
                 self.error.emit("Could not parse playlist data")
                 return
@@ -249,8 +257,6 @@ class PlaylistFetchWorker(QThread):
                 self.video_found.emit(url, title)
                 self.progress.emit(i + 1, total)
 
-        except requests.RequestException as e:
-            self.error.emit(str(e))
         except (json.JSONDecodeError, ValueError) as e:
             self.error.emit(f"Parse error: {e}")
         finally:

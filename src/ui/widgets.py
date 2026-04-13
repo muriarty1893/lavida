@@ -227,6 +227,7 @@ class VideoCard(QFrame):
         text_layout.setSpacing(1)
 
         self.title_lbl = QLabel(title)
+        self.title_lbl.setTextFormat(Qt.TextFormat.PlainText)
         self.title_lbl.setStyleSheet(f"""
             color: {theme.CLR_TEXT};
             font-size: 13px;
@@ -236,6 +237,7 @@ class VideoCard(QFrame):
         text_layout.addWidget(self.title_lbl)
 
         self.channel_lbl = QLabel()
+        self.channel_lbl.setTextFormat(Qt.TextFormat.PlainText)
         self.channel_lbl.setStyleSheet(f"""
             color: {theme.CLR_TEXT_DIM};
             font-size: 10px;

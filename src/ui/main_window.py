@@ -14,11 +14,24 @@ from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize, QTimer, QObject, QEvent
 
 import src.theme as theme
 from src.database import Database
+from src.net import is_safe_youtube_url, fetch_bounded
 from src.obsidian_export import ObsidianExporter
 from src.workers import GlobalInputListener, PlaylistFetchWorker
 from src.ui.widgets import VideoCard, DraggableListWidget
 
 logger = logging.getLogger(__name__)
+
+_PAGE_MAX_BYTES = 4 * 1024 * 1024   # 4 MiB — YouTube pages ~2 MiB
+_OEMBED_MAX_BYTES = 64 * 1024        # 64 KiB
+_THUMB_MAX_BYTES = 2 * 1024 * 1024  # 2 MiB
+
+
+def _sanitize_tab_name(raw: str) -> str | None:
+    """Return a safe tab name or None if the input is invalid."""
+    cleaned = re.sub(r'[/\\:*?"<>|\x00-\x1f]', '', raw).strip().strip('.')
+    if not cleaned:
+        return None
+    return cleaned[:64]
 
 
 class _TabBarDragFilter(QObject):
@@ -843,8 +856,8 @@ class LavidaApp(QMainWindow):
         """)
 
         if dialog.exec():
-            new_name = re.sub(r'[/\\:*?"<>|]', '', dialog.textValue()).strip()
-            if new_name:
+            new_name = _sanitize_tab_name(dialog.textValue())
+            if new_name and new_name not in self._get_tab_names():
                 self.tabs.setTabText(index, new_name)
                 self.db.rename_tab(self._work_tab_ids[index], new_name)
                 self.obsidian_exporter.update_tab_names(self._get_tab_names())
@@ -1143,7 +1156,7 @@ class LavidaApp(QMainWindow):
         elif event.mimeData().hasText():
             url = event.mimeData().text()
 
-        if "youtube.com" in url or "youtu.be" in url:
+        if is_safe_youtube_url(url):
             self._add_video_url(url)
 
     @staticmethod
@@ -1260,7 +1273,7 @@ class LavidaApp(QMainWindow):
         QApplication.processEvents()
         url = QApplication.clipboard().text().strip()
 
-        if 'youtube.com' in url or 'youtu.be' in url:
+        if is_safe_youtube_url(url):
             self._add_video_url(url)
             self.activateWindow()
 
@@ -1295,33 +1308,32 @@ class LavidaApp(QMainWindow):
         thumb_path = ""
         duration = ""
         channel = ""
-        page_text = ""
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(url, headers=headers, timeout=5)
-            page_text = response.text
-            soup = BeautifulSoup(page_text, 'html.parser')
-            if soup.title:
-                title = soup.title.string.replace("- YouTube", "").strip()
+            raw = fetch_bounded(url, _PAGE_MAX_BYTES)
+            if raw is not None:
+                page_text = raw.decode("utf-8", errors="replace")
+                soup = BeautifulSoup(page_text, 'html.parser')
+                if soup.title:
+                    title = soup.title.string.replace("- YouTube", "").strip()
 
-            # Extract duration from JSON-LD
-            for script in soup.find_all('script', type='application/ld+json'):
-                try:
-                    data = json.loads(script.string)
-                    if isinstance(data, dict) and 'duration' in data:
-                        duration = self._parse_iso_duration(data['duration'])
-                        break
-                except (json.JSONDecodeError, TypeError):
-                    pass
+                # Extract duration from JSON-LD
+                for script in soup.find_all('script', type='application/ld+json'):
+                    try:
+                        data = json.loads(script.string)
+                        if isinstance(data, dict) and 'duration' in data:
+                            duration = self._parse_iso_duration(data['duration'])
+                            break
+                    except (json.JSONDecodeError, TypeError):
+                        pass
         except Exception:
             logger.warning("Failed to fetch title for %s", url, exc_info=True)
 
         # Fetch channel name via oEmbed
         try:
             oembed_url = f"https://www.youtube.com/oembed?url={url}&format=json"
-            resp = requests.get(oembed_url, timeout=5)
-            if resp.status_code == 200:
-                channel = resp.json().get('author_name', '')
+            raw = fetch_bounded(oembed_url, _OEMBED_MAX_BYTES)
+            if raw is not None:
+                channel = json.loads(raw).get('author_name', '')
         except Exception:
             logger.warning("Failed to fetch channel for %s", url, exc_info=True)
 
@@ -1329,11 +1341,11 @@ class LavidaApp(QMainWindow):
             video_id = self.extract_video_id(url)
             if video_id:
                 thumb_url = f"https://img.youtube.com/vi/{video_id}/mqdefault.jpg"
-                resp = requests.get(thumb_url, timeout=5)
-                if resp.status_code == 200:
+                raw = fetch_bounded(thumb_url, _THUMB_MAX_BYTES)
+                if raw is not None:
                     thumb_path = os.path.join(self.db.thumbnails_dir, f"{video_id}.jpg")
                     with open(thumb_path, 'wb') as f:
-                        f.write(resp.content)
+                        f.write(raw)
         except Exception:
             logger.warning("Failed to fetch thumbnail for %s", url, exc_info=True)
 
